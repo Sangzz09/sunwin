@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SUNWIN TOOL — MINHSANG (Neon Verify)</title>
+<link rel="preconnect" href="https://fonts.gstatic.com">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&display=swap');
+  :root{
+    --bg1:#04020a; --bg2:#05041a;
+    --accent1:#6ef7ff; --accent2:#8a6bff; --danger:#ff7b7b;
+    --glass: rgba(255,255,255,0.02);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:linear-gradient(160deg,var(--bg1),var(--bg2));font-family:Inter,Arial,sans-serif;color:#eaffff}
+  #bgCanvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .wrap{position:relative;z-index:2;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px}
+  .card{width:100%;max-width:900px;border-radius:16px;padding:22px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.04);box-shadow:0 12px 40px rgba(0,0,0,0.6);backdrop-filter: blur(6px)}
+  header{display:flex;align-items:center;gap:14px}
+  .badge{width:72px;height:72px;border-radius:12px;background:linear-gradient(135deg,var(--accent2),var(--accent1));display:flex;align-items:center;justify-content:center;font-family:Orbitron;font-weight:900;color:#021}
+  h1{margin:0;font-family:Orbitron,monospace;font-size:20px}
+  .sub{color:rgba(255,255,255,0.28);font-size:13px;margin-top:6px}
+
+  .form{display:flex;gap:12px;margin-top:20px;align-items:center}
+  .input{flex:1;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#fff;font-weight:700;letter-spacing:2px;font-family:Orbitron,monospace;font-size:16px}
+  .btn{padding:12px 16px;border-radius:12px;border:none;cursor:pointer;font-weight:800;box-shadow:0 8px 30px rgba(0,0,0,0.4)}
+  .btn-verify{background:linear-gradient(90deg,var(--accent1),var(--accent2));color:#021}
+  .btn-logout{background:transparent;border:1px solid rgba(255,255,255,0.06);color:#fff}
+
+  .status{margin-top:12px;font-size:14px;color:rgba(255,255,255,0.75)}
+  .session{margin-top:18px;font-size:20px;font-weight:700;color:var(--accent1)}
+  .pred{display:flex;gap:18px;align-items:center;justify-content:center;margin-top:20px}
+  .sphere{width:180px;height:180px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;color:#021;font-size:22px;opacity:0.25;transition:all .18s}
+  .tai{background:linear-gradient(135deg,#7FFFD4,#00e6b8)}
+  .xiu{background:linear-gradient(135deg,#ff9b9b,#ff5555)}
+  .active{opacity:1;transform:scale(1.06);box-shadow:0 20px 60px rgba(110,247,255,0.08), 0 0 40px rgba(138,107,255,0.06)}
+
+  .meta{display:flex;gap:12px;align-items:center;justify-content:center;margin-top:12px;font-size:13px;color:rgba(255,255,255,0.28)}
+  footer{margin-top:18px;text-align:center;color:rgba(255,255,255,0.14);font-size:12px}
+
+  /* shimmer */
+  .shimmer{position:relative;overflow:hidden}
+  .shimmer::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg, rgba(255,255,255,0.06), rgba(255,255,255,0));transform:translateX(-110%);animation:sh 3.5s linear infinite}
+  @keyframes sh{to{transform:translateX(110%)}} 
+
+</style>
+</head>
+<body>
+<canvas id="bgCanvas"></canvas>
+<div class="wrap">
+  <div class="card">
+    <header>
+      <div class="badge">SUN</div>
+      <div>
+        <h1>SUNWIN TOOL — MINHSANG</h1>
+        <div class="sub">Nhập key để xác thực — API verify cố định: <code>https://key-web.onrender.com/verify</code></div>
+      </div>
+    </header>
+
+    <div class="form">
+      <input id="key_input" class="input" placeholder="NHẬP KEY 10 KÝ TỰ" maxlength="10" />
+      <button id="verify_btn" class="btn btn-verify shimmer">XÁC THỰC</button>
+      <button id="logout_btn" class="btn btn-logout">ĐĂNG XUẤT</button>
+    </div>
+
+    <div id="status" class="status">Trạng thái: Chưa xác thực</div>
+
+    <div id="session_wrap" style="display:none">
+      <div class="session">Phiên hiện tại: <span id="session_num">-</span></div>
+      <div class="pred" id="pred_box">
+        <div id="tai" class="sphere tai">TÀI</div>
+        <div id="xiu" class="sphere xiu">XỈU</div>
+      </div>
+      <div class="meta"><div id="pred_algo">AI: MINHSANG V26</div><div id="pred_conf">—</div></div>
+    </div>
+
+    <footer>Admin: <a href="./admin.html" style="color:#8a6bff;text-decoration:none">SUNWIN ADMIN PANEL</a></footer>
+  </div>
+</div>
+
+<script>
+/* =========================
+   Config
+   ========================= */
+const API_BASE = 'https://key-web.onrender.com'; // fixed
+const SUNWIN_API = 'https://sunwinsew.onrender.com/sunwinapi'; // prediction API
+
+/* =========================
+   Background particles (same style)
+   ========================= */
+const canvas = document.getElementById('bgCanvas');
+const ctx = canvas.getContext('2d');
+let W = canvas.width = innerWidth;
+let H = canvas.height = innerHeight;
+window.addEventListener('resize', ()=>{ W = canvas.width = innerWidth; H = canvas.height = innerHeight; initParticles(); });
+
+let particles = [];
+function initParticles(){
+  particles = [];
+  const count = Math.max(24, Math.floor((W*H)/90000));
+  for(let i=0;i<count;i++){
+    particles.push({
+      x: Math.random()*W,
+      y: Math.random()*H,
+      vx: (Math.random()-0.5)*0.5,
+      vy: (Math.random()-0.5)*0.5,
+      r: 1+Math.random()*3,
+      hue: 180 + Math.random()*140
+    });
+  }
+}
+function drawBg(){
+  ctx.clearRect(0,0,W,H);
+  // gradient overlay
+  const g = ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,'rgba(5,4,18,0.3)'); g.addColorStop(1,'rgba(4,6,14,0.6)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  for(let p of particles){
+    p.x += p.vx; p.y += p.vy;
+    if (p.x < -50) p.x = W+50; if (p.x > W+50) p.x = -50;
+    if (p.y < -50) p.y = H+50; if (p.y > H+50) p.y = -50;
+    ctx.beginPath();
+    const rad = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,p.r*6);
+    rad.addColorStop(0, `hsla(${p.hue},100%,70%,0.85)`);
+    rad.addColorStop(0.5, `hsla(${p.hue},90%,60%,0.2)`);
+    rad.addColorStop(1, `hsla(${p.hue},90%,50%,0)`);
+    ctx.fillStyle = rad; ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+  }
+  requestAnimationFrame(drawBg);
+}
+initParticles(); drawBg();
+
+/* =========================
+   Device id + helpers
+   ========================= */
+const DEVICE_KEY = 'sunwin_device_id';
+const ACTIVE_KEY_NAME = 'sunwin_active_key';
+function getDeviceId(){
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id){
+    if (crypto && crypto.randomUUID) id = crypto.randomUUID();
+    else id = 'dev-'+Math.random().toString(36).slice(2,18);
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
+function setStatus(s){ document.getElementById('status').innerText = 'Trạng thái: ' + s; }
+
+/* =========================
+   Verify via server
+   ========================= */
+async function verifyKeyServer(key){
+  const device_id = getDeviceId();
+  try {
+    const res = await fetch(API_BASE + '/verify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ key, device_id })
+    });
+    const j = await res.json(); return j;
+  } catch(err){ console.error(err); return { success:false, message: 'Không thể kết nối server: '+err.message }; }
+}
+
+/* =========================
+   UI bindings + prediction polling
+   ========================= */
+const keyInput = document.getElementById('key_input');
+const verifyBtn = document.getElementById('verify_btn');
+const logoutBtn = document.getElementById('logout_btn');
+const sessionWrap = document.getElementById('session_wrap');
+const sessionNum = document.getElementById('session_num');
+const taiEl = document.getElementById('tai');
+const xiuEl = document.getElementById('xiu');
+
+let pollTimer = null;
+let blinkTimer = null;
+
+verifyBtn.addEventListener('click', async ()=>{
+  const key = keyInput.value.trim().toUpperCase();
+  if (!key || key.length < 6) return alert('Nhập key hợp lệ (10 ký tự)');
+  setStatus('Đang xác thực key trên server...');
+  const r = await verifyKeyServer(key);
+  if (r.success){
+    localStorage.setItem(ACTIVE_KEY_NAME, key);
+    setStatus('Key hợp lệ — ' + (r.message || 'Đã xác thực'));
+    startTool();
+  } else {
+    setStatus('Lỗi: ' + (r.message || 'Xác thực thất bại'));
+    localStorage.removeItem(ACTIVE_KEY_NAME);
+  }
+});
+
+logoutBtn.addEventListener('click', ()=>{ localStorage.removeItem(ACTIVE_KEY_NAME); setStatus('Đã đăng xuất'); stopPolling(); sessionWrap.style.display='none'; });
+
+window.addEventListener('load', ()=>{
+  const ak = localStorage.getItem(ACTIVE_KEY_NAME);
+  if (ak){ keyInput.value = ak; setStatus('Đã đăng nhập bằng key lưu cục bộ'); startTool(); } else setStatus('Chưa xác thực');
+});
+
+async function startTool(){
+  sessionWrap.style.display='block';
+  await fetchAndShow();
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(fetchAndShow, 6000);
+}
+
+function stopPolling(){ if (pollTimer) clearInterval(pollTimer); if (blinkTimer) clearInterval(blinkTimer); blinkTimer=null; }
+
+async function fetchAndShow(){
+  try {
+    const r = await fetch(SUNWIN_API, {cache:'no-store'});
+    const j = await r.json();
+    const phien = Number(j.phien) || 0;
+    sessionNum.innerText = phien + 1;
+    const predRaw = (j.du_doan_tiep_theo || '').toString();
+    document.getElementById('pred_algo').innerText = (j.thuat_toan || 'AI MINHSANG V26') ;
+    showPrediction(predRaw);
+  } catch(err){ console.error(err); setStatus('Không thể lấy dữ liệu dự đoán'); }
+}
+
+function normalizeNoAccents(s){ return s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g,'') : s; }
+function showPrediction(predRaw){
+  const p = normalizeNoAccents((predRaw||'').toLowerCase());
+  taiEl.classList.remove('active'); xiuEl.classList.remove('active');
+  taiEl.style.opacity='0.25'; xiuEl.style.opacity='0.25';
+  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer=null; }
+  if (!p) return;
+  if (p.includes('tai')) {
+    taiEl.classList.add('active');
+    let on=true; blinkTimer=setInterval(()=>{ on=!on; taiEl.style.opacity = on ? '1' : '0.25'; }, 420);
+  } else if (p.includes('xiu') || p.includes('xiu')) {
+    xiuEl.classList.add('active');
+    let on=true; blinkTimer=setInterval(()=>{ on=!on; xiuEl.style.opacity = on ? '1' : '0.25'; }, 420);
+  }
+}
+</script>
+</body>
+</html>

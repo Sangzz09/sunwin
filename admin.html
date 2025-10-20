@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SUNWIN ADMIN PANEL — Neon Dark</title>
+<link rel="preconnect" href="https://fonts.gstatic.com">
+<style>
+  /* Fonts */
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&display=swap');
+
+  :root{
+    --bg1:#060311;
+    --bg2:#0a0420;
+    --accent1:#6ef7ff;
+    --accent2:#8a6bff;
+    --gold:#ffd166;
+    --glass: rgba(255,255,255,0.03);
+    --muted: rgba(255,255,255,0.18);
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:linear-gradient(120deg,var(--bg1),var(--bg2));font-family:Inter,Arial,Helvetica,sans-serif;color:#e6faff;-webkit-font-smoothing:antialiased}
+  /* canvas background */
+  #bgCanvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .wrap{position:relative;z-index:2;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:48px 20px}
+  .panel{width:100%;max-width:1100px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.05);border-radius:16px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.6);backdrop-filter: blur(6px);overflow:hidden}
+  header{display:flex;align-items:center;gap:16px;margin-bottom:14px}
+  .logo{
+    width:76px;height:76px;border-radius:12px;background:linear-gradient(135deg,var(--accent2),var(--accent1));display:flex;align-items:center;justify-content:center;font-family:Orbitron,monospace;font-weight:900;color:#021;box-shadow:0 6px 24px rgba(138,107,255,0.18), inset 0 -6px 30px rgba(0,0,0,0.2)
+  }
+  h1{font-family:Orbitron,monospace;margin:0;font-weight:700;font-size:20px;letter-spacing:1px;color:#fff;text-shadow:0 2px 16px rgba(138,107,255,0.18)}
+  p.lead{margin:0;color:var(--muted);font-size:13px}
+
+  .grid{display:grid;grid-template-columns: 1fr 420px; gap:18px;margin-top:18px}
+  @media (max-width:980px){ .grid{grid-template-columns:1fr} }
+
+  /* left: controls + list */
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,0.03)}
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:8px}
+  select,input[type=date]{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#fff}
+  .row{display:flex;gap:8px}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:none;cursor:pointer;font-weight:700;
+    box-shadow:0 6px 18px rgba(0,0,0,0.5);transition:all .18s;
+  }
+  .btn-primary{background:linear-gradient(90deg,var(--accent1),var(--accent2));color:#021}
+  .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:#fff}
+  .btn-danger{background:linear-gradient(90deg,#ff6b6b,#ff3b3b);color:#fff}
+  .btn:active{transform:translateY(1px)}
+  .hint{font-size:13px;color:rgba(255,255,255,0.18);margin-top:8px}
+
+  /* list */
+  .list{margin-top:10px;max-height:420px;overflow:auto;padding:8px}
+  .item{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:10px;margin-bottom:8px;background:linear-gradient(90deg, rgba(255,255,255,0.012), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.02)}
+  .meta{font-size:13px;color:var(--muted)}
+  .key{font-family:Orbitron,monospace;font-weight:700;color:#fff;letter-spacing:1px}
+
+  /* right: stats panel */
+  .side{display:flex;flex-direction:column;gap:12px}
+  .big{padding:18px;border-radius:12px;background:linear-gradient(90deg, rgba(138,107,255,0.06), rgba(110,247,255,0.03));border:1px solid rgba(255,255,255,0.03);text-align:center}
+  .big h2{margin:0;font-family:Orbitron;font-size:28px;color:#fff}
+  .big p{margin:6px 0 0 0;color:var(--muted)}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+
+  /* glow underline */
+  .glow-title{position:relative;display:inline-block;padding-bottom:6px}
+  .glow-title::after{content:'';position:absolute;left:0;right:0;bottom:0;height:6px;background:linear-gradient(90deg, rgba(110,247,255,0.14), rgba(138,107,255,0.14));filter:blur(12px);z-index:-1;border-radius:6px}
+
+  /* tiny */
+  .small{font-size:12px;color:var(--muted)}
+
+  /* shimmering button effect */
+  .btn-primary::after{
+    content:'';position:absolute;pointer-events:none;inset:0;border-radius:10px;mix-blend-mode:screen;opacity:0.06;
+    background:linear-gradient(120deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02));
+    transition:opacity .3s
+  }
+  .btn-primary:hover::after{opacity:0.18}
+
+  /* animated border */
+  .animated-border{
+    position:relative;border-radius:12px;
+    padding:2px;
+    background:linear-gradient(90deg, rgba(110,247,255,0.06), rgba(138,107,255,0.06));
+  }
+  .animated-border .inner{background:linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.25));border-radius:10px;padding:12px}
+
+  /* footer */
+  footer{margin-top:18px;text-align:center;color:rgba(255,255,255,0.15);font-size:12px}
+
+  /* loader */
+  .loader{width:18px;height:18px;border-radius:50%;box-shadow:0 0 12px rgba(138,107,255,0.6);animation:spin 1.2s linear infinite}
+  @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+</style>
+</head>
+<body>
+<canvas id="bgCanvas"></canvas>
+<div class="wrap">
+  <div class="panel">
+    <header>
+      <div class="logo">ADM</div>
+      <div>
+        <h1 class="glow-title">SUNWIN ADMIN PANEL</h1>
+        <p class="lead">Quản lý key — tạo / xóa / reset. API cố định: <code>https://key-web.onrender.com</code></p>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- left -->
+      <div>
+        <div class="card animated-border">
+          <div class="inner">
+            <label>Hạn sử dụng</label>
+            <div class="row">
+              <select id="expires_sel">
+                <option value="forever">Vĩnh viễn</option>
+                <option value="7">7 ngày</option>
+                <option value="30">30 ngày</option>
+                <option value="custom">Chọn ngày</option>
+              </select>
+              <input id="custom_date" type="date" style="display:none;width:170px"/>
+            </div>
+
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+              <button id="create_btn" class="btn btn-primary" style="position:relative">Tạo key 10 ký tự</button>
+              <button id="refresh_btn" class="btn btn-ghost">Làm mới danh sách</button>
+              <div id="create_status" style="margin-left:12px"></div>
+            </div>
+
+            <div class="hint">Sau khi tạo, key sẽ được copy vào clipboard (nếu trình duyệt cho phép). Nếu server yêu cầu auth, bạn cần chỉnh thêm header.</div>
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div class="card" style="padding:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div><strong class="small">Danh sách key trên server</strong></div>
+            <div class="small">Click để thao tác</div>
+          </div>
+          <div class="list" id="key_list">Nhấn "Làm mới danh sách" để tải key từ server</div>
+        </div>
+      </div>
+
+      <!-- right -->
+      <aside class="side">
+        <div class="big card">
+          <h2 id="stat_count">--</h2>
+          <p class="small">Tổng key</p>
+          <div style="height:10px"></div>
+          <div class="actions">
+            <button id="export_btn" class="btn btn-ghost">Export JSON</button>
+            <button id="clear_local" class="btn btn-ghost">Clear local cache</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+            <div>
+              <div class="small">Server</div>
+              <div style="font-weight:700">https://key-web.onrender.com</div>
+            </div>
+            <div id="server_ping" class="small">—</div>
+          </div>
+        </div>
+
+        <div class="card small">
+          Hướng dẫn: Sử dụng nút <strong>Tạo key</strong> để tạo key theo hạn; dùng <strong>Làm mới</strong> để load danh sách. Reset sẽ gọi endpoint /reset nếu server hỗ trợ.
+        </div>
+      </aside>
+    </div>
+
+    <footer>© MINHSANG — Neon Admin UI</footer>
+  </div>
+</div>
+
+<script>
+/* =========================
+   Config:
+   ========================= */
+const API_BASE = 'https://key-web.onrender.com'; // fixed
+const KEY_LIST_EL = document.getElementById('key_list');
+const STAT_COUNT = document.getElementById('stat_count');
+const SERVER_PING = document.getElementById('server_ping');
+const CREATE_STATUS = document.getElementById('create_status');
+
+/* =========================
+   Particles background
+   ========================= */
+const canvas = document.getElementById('bgCanvas');
+const ctx = canvas.getContext('2d');
+let W = canvas.width = innerWidth;
+let H = canvas.height = innerHeight;
+window.addEventListener('resize', ()=>{ W = canvas.width = innerWidth; H = canvas.height = innerHeight; });
+
+const particles = [];
+const PARTICLE_COUNT = Math.floor((W*H)/70000);
+for(let i=0;i<PARTICLE_COUNT;i++){
+  particles.push({
+    x: Math.random()*W,
+    y: Math.random()*H,
+    vx: (Math.random()-0.5)*0.2,
+    vy: (Math.random()-0.5)*0.2,
+    r: 1+Math.random()*2,
+    hue: 200 + Math.random()*120
+  });
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // soft gradient glow
+  const g = ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0, 'rgba(10,6,20,0.25)');
+  g.addColorStop(1, 'rgba(5,3,10,0.45)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  // draw particles
+  for(let p of particles){
+    p.x += p.vx; p.y += p.vy;
+    if(p.x<0) p.x=W;
+    if(p.x>W) p.x=0;
+    if(p.y<0) p.y=H;
+    if(p.y>H) p.y=0;
+    ctx.beginPath();
+    const grad = ctx.createRadialGradient(p.x,p.y,p.r*0.1,p.x,p.y,p.r*6);
+    grad.addColorStop(0, `hsla(${p.hue},100%,70%,0.85)`);
+    grad.addColorStop(0.4, `hsla(${p.hue},90%,60%,0.28)`);
+    grad.addColorStop(1, `hsla(${p.hue},90%,50%,0)`);
+    ctx.fillStyle = grad;
+    ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+/* =========================
+   Utils
+   ========================= */
+function show(msg){ alert(msg); }
+function isoNow(){ return new Date().toISOString(); }
+
+/* =========================
+   Admin logic: create/list/delete/reset/export
+   ========================= */
+document.getElementById('expires_sel').addEventListener('change', (e)=>{
+  document.getElementById('custom_date').style.display = (e.target.value === 'custom') ? 'inline-block' : 'none';
+});
+
+document.getElementById('create_btn').addEventListener('click', async ()=>{
+  let exp = document.getElementById('expires_sel').value;
+  if (exp === 'custom'){ const d = document.getElementById('custom_date').value; if(!d) return show('Chọn ngày'); exp = d; }
+  else if (exp === '7' || exp==='30'){ const dt = new Date(); dt.setDate(dt.getDate()+Number(exp)); exp = dt.toISOString().slice(0,10); }
+  CREATE_STATUS.innerHTML = '<div class="loader"></div>';
+  try {
+    const res = await fetch(API_BASE + '/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ expires: exp }) });
+    const j = await res.json();
+    CREATE_STATUS.innerHTML = '';
+    if (j.success){
+      try { await navigator.clipboard.writeText(j.key); } catch(e){}
+      show('Tạo key thành công: ' + j.key + '\n(Key đã copy nếu trình duyệt cho phép)');
+      loadList();
+    } else show('Tạo key lỗi: ' + (j.message || JSON.stringify(j)));
+  } catch(err){ CREATE_STATUS.innerHTML=''; console.error(err); show('Lỗi kết nối server: '+err.message); }
+});
+
+async function loadList(){
+  KEY_LIST_EL.innerHTML = 'Đang tải...';
+  try {
+    const res = await fetch(API_BASE + '/list'); const j = await res.json();
+    if(!j || typeof j !== 'object'){ KEY_LIST_EL.innerHTML = 'Dữ liệu server không hợp lệ'; return; }
+    const keys = j;
+    const arr = Object.keys(keys).sort((a,b)=>a.localeCompare(b));
+    STAT_COUNT.innerText = arr.length;
+    if (arr.length===0){ KEY_LIST_EL.innerHTML = '<div class="small">Không có key</div>'; return; }
+    KEY_LIST_EL.innerHTML = '';
+    for(const k of arr){
+      const r = keys[k];
+      const it = document.createElement('div'); it.className='item';
+      it.innerHTML = `<div>
+          <div class="key">${k}</div>
+          <div class="meta">${r.expires || 'forever'} • ${r.activated_at ? 'active' : 'unassigned'}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-ghost" onclick="copyKey('${k}')">Copy</button>
+          <button class="btn" onclick="resetAssignment('${k}')">Reset</button>
+          <button class="btn btn-danger" onclick="deleteKey('${k}')">Xóa</button>
+        </div>`;
+      KEY_LIST_EL.appendChild(it);
+    }
+  } catch(err){ console.error(err); KEY_LIST_EL.innerHTML = 'Không thể kết nối: '+ err.message; }
+}
+window.copyKey = async function(k){ try{ await navigator.clipboard.writeText(k); show('Copied: ' + k); }catch(e){ show('Không copy được'); } }
+
+window.deleteKey = async function(k){
+  if(!confirm('Xác nhận xóa key '+k+' ?')) return;
+  try {
+    const res = await fetch(API_BASE + '/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key: k }) });
+    const j = await res.json();
+    if(j.success){ show('Đã xóa'); loadList(); } else show('Xóa thất bại: '+(j.message||JSON.stringify(j)));
+  } catch(err){ show('Lỗi kết nối: '+err.message); }
+}
+
+window.resetAssignment = async function(k){
+  if(!confirm('Reset gán thiết bị cho key '+k+' ?')) return;
+  try {
+    // try reset route
+    const res = await fetch(API_BASE + '/reset', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key: k }) });
+    const j = await res.json();
+    if (j.success){ show('Đã reset'); loadList(); return; }
+  } catch(e){}
+  // fallback: advise admin
+  if (confirm('Server không hỗ trợ /reset. Bạn muốn xóa và tạo lại key (không giống hoàn toàn)?')) {
+    await window.deleteKey(k);
+  }
+}
+
+document.getElementById('export_btn').addEventListener('click', async ()=>{
+  try {
+    const res = await fetch(API_BASE + '/list'); const j = await res.json();
+    const blob = new Blob([JSON.stringify(j, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'keys_export.json'; a.click(); URL.revokeObjectURL(url);
+  } catch(err){ show('Lỗi: '+err.message); }
+});
+
+document.getElementById('clear_local').addEventListener('click', ()=>{
+  localStorage.removeItem('sunwin_keys'); show('Đã xóa local cache (nếu có)');
+});
+
+/* ping server */
+async function ping(){
+  try {
+    const res = await fetch(API_BASE + '/list'); if (res.ok) SERVER_PING.innerText = 'Online'; else SERVER_PING.innerText = 'Error';
+  } catch(e){ SERVER_PING.innerText = 'Offline'; }
+}
+setInterval(ping, 8000); ping();
+
+/* auto load */
+window.addEventListener('load', loadList);
+</script>
+</body>
+</html>
