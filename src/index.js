@@ -45,7 +45,7 @@ app.post("/verify", (req, res) => {
   if (!info)
     return res.json({ success: false, message: "Key không tồn tại" });
 
-  // Kiểm tra hạn
+  // Kiểm tra hạn sử dụng
   if (info.expires && info.expires !== "forever") {
     const now = new Date();
     const exp = new Date(info.expires);
@@ -86,10 +86,11 @@ app.post("/create", (req, res) => {
   const { key, expires } = req.body;
   const keys = loadKeys();
 
-  // Nếu không có key -> tự tạo ngẫu nhiên
+  // Nếu không có key → tự tạo ngẫu nhiên với prefix MS-
   const newKey =
     key ||
-    Math.random().toString(36).substring(2, 8).toUpperCase() +
+    "MS-" +
+      Math.random().toString(36).substring(2, 8).toUpperCase() +
       "-" +
       Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -127,7 +128,7 @@ app.post("/deleteall", (req, res) => {
 });
 
 // ==============================
-// 📋 API LIỆT KÊ (cũ)
+// 📋 API LIỆT KÊ DẠNG OBJECT (Cũ)
 // ==============================
 app.get("/list", (req, res) => {
   res.json(loadKeys());
@@ -145,6 +146,16 @@ app.get("/keys", (req, res) => {
     device_id: info.device_id || "Chưa kích hoạt",
   }));
   res.json(list);
+});
+
+// ==============================
+// 🔎 API /check/:key — Xem chi tiết key (tùy chọn)
+// ==============================
+app.get("/check/:key", (req, res) => {
+  const keys = loadKeys();
+  const info = keys[req.params.key];
+  if (!info) return res.json({ success: false, message: "Key không tồn tại" });
+  res.json({ success: true, key: req.params.key, ...info });
 });
 
 // ==============================
