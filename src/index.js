@@ -1,135 +1,120 @@
-// =====================================
-// 🌟 MINHSANG JSONBIN KEY SERVER 2025 🌟
-// =====================================
+// 🌈 MINHSANG KEY SERVER — FULL v7.3
+// Chạy trên Render
 const express = require("express");
-const axios = require("axios");
 const cors = require("cors");
 const bodyParser = require("body-parser");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// === Cấu hình JSONBin.io ===
-const BIN_ID = "68fb9d8fd0ea881f40b887a4";
-const API_KEY = "$2a$10$GjxpyFeP.rGahOH2lXjEeeuWJU9iYvRm2xKwf.3ilZ7kChkmcFp92";
-const JSONBIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+const DATA_FILE = "./keys.json";
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Hàm đọc dữ liệu từ JSONBin
-async function loadKeys() {
+// Đọc keys
+function loadKeys() {
+  if (!fs.existsSync(DATA_FILE)) return {};
   try {
-    const res = await axios.get(JSONBIN_URL, {
-      headers: { "X-Master-Key": API_KEY },
-    });
-    return res.data.record || {};
-  } catch (e) {
+    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  } catch {
     return {};
   }
 }
 
-// Hàm ghi dữ liệu lên JSONBin
-async function saveKeys(keys) {
-  await axios.put(JSONBIN_URL, keys, {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Master-Key": API_KEY,
-    },
-  });
+// Lưu keys
+function saveKeys(keys) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(keys, null, 2));
 }
 
-// ==========================
-// 🔐 XÁC THỰC KEY
-// ==========================
-app.post("/verify", async (req, res) => {
-  const { key, device_id } = req.body;
-  if (!key || !device_id)
-    return res.json({ success: false, message: "Thiếu dữ liệu" });
-
-  const keys = await loadKeys();
-  const info = keys[key];
-  if (!info) return res.json({ success: false, message: "Key không tồn tại" });
-
-  if (info.expires && info.expires !== "forever") {
-    const now = new Date();
-    const exp = new Date(info.expires);
-    if (now > exp)
-      return res.json({ success: false, message: "Key đã hết hạn" });
-  }
-
-  if (!info.device_id) {
-    info.device_id = device_id;
-    info.activated_at = new Date().toISOString();
-    keys[key] = info;
-    await saveKeys(keys);
-    return res.json({ success: true, message: "Key hợp lệ (đã gán thiết bị)" });
-  }
-
-  if (info.device_id === device_id)
-    return res.json({ success: true, message: "Key hợp lệ" });
-
-  res.json({ success: false, message: "Key đã dùng ở thiết bị khác" });
-});
-
-// ==========================
-// 🧩 TẠO KEY
-// ==========================
-app.post("/create", async (req, res) => {
-  const keys = await loadKeys();
-  const newKey = "MS-" + Math.random().toString(36).substring(2, 10).toUpperCase();
-  const expires = new Date(Date.now() + 86400000).toISOString(); // 1 ngày
-
-  keys[newKey] = {
-    expires,
-    device_id: null,
-    created_at: new Date().toISOString(),
-  };
-
-  await saveKeys(keys);
-  res.json({ success: true, message: "Tạo key thành công", key: newKey });
-});
-
-// ==========================
-// 📋 DANH SÁCH KEY
-// ==========================
-app.get("/keys", async (_, res) => {
-  const keys = await loadKeys();
+// 📋 Lấy danh sách key
+app.get("/keys", (req, res) => {
+  const keys = loadKeys();
   const list = Object.entries(keys).map(([key, info]) => ({
     key,
-    expires: info.expires,
+    expires: info.expires || "forever",
     created_at: info.created_at,
     device_id: info.device_id || "Chưa kích hoạt",
   }));
   res.json(list);
 });
 
-// ==========================
-// ❌ XOÁ 1 KEY
-// ==========================
-app.post("/delete", async (req, res) => {
-  const { key } = req.body;
-  const keys = await loadKeys();
-  if (!keys[key])
-    return res.json({ success: false, message: "Không tìm thấy key" });
-  delete keys[key];
-  await saveKeys(keys);
-  res.json({ success: true, message: `Đã xoá key ${key}` });
+// 🆕 Tạo key mới
+app.post("/create", (req, res) => {
+  const { expires } = req.body;
+  const keys = loadKeys();
+
+  const prefix = "MS-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+  const newKey =
+    prefix + "-" + Math.random().toString(36).substring(2, 8).toUpperCase();
+
+  if (keys[newKey])
+    return res.json({ success: false, message: "Key đã tồn tại" });
+
+  let expireDate = "forever";
+  if (expires === "1d") {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    expireDate = d.toISOString();
+  }
+
+  keys[newKey] = {
+    device_id: null,
+    created_at: new Date().toISOString(),
+    expires: expireDate,
+  };
+  saveKeys(keys);
+  res.json({ success: true, message: "Tạo key thành công", key: newKey });
 });
 
-// ==========================
-// 🔁 RESET TẤT CẢ KEY
-// ==========================
-app.post("/reset", async (_, res) => {
-  const keys = await loadKeys();
-  for (let k in keys) {
+// 🔄 Reset toàn bộ key
+app.post("/reset", (req, res) => {
+  const keys = loadKeys();
+  for (const k in keys) {
     keys[k].device_id = null;
     keys[k].activated_at = null;
   }
-  await saveKeys(keys);
+  saveKeys(keys);
   res.json({ success: true, message: "Đã reset toàn bộ key" });
 });
 
+// ❌ Xóa từng key
+app.post("/delete", (req, res) => {
+  const { key } = req.body;
+  const keys = loadKeys();
+  if (!keys[key]) return res.json({ success: false, message: "Key không tồn tại" });
+  delete keys[key];
+  saveKeys(keys);
+  res.json({ success: true, message: `Đã xóa key ${key}` });
+});
+
+// 🔐 API xác thực (cho client)
+app.post("/verify", (req, res) => {
+  const { key, device_id } = req.body;
+  if (!key || !device_id)
+    return res.json({ success: false, message: "Thiếu dữ liệu" });
+
+  const keys = loadKeys();
+  const info = keys[key];
+  if (!info) return res.json({ success: false, message: "Key không tồn tại" });
+
+  if (info.expires !== "forever" && new Date() > new Date(info.expires))
+    return res.json({ success: false, message: "Key đã hết hạn" });
+
+  if (!info.device_id) {
+    info.device_id = device_id;
+    info.activated_at = new Date().toISOString();
+    keys[key] = info;
+    saveKeys(keys);
+    return res.json({ success: true, message: "Key hợp lệ (đã gán thiết bị)" });
+  }
+
+  if (info.device_id === device_id)
+    return res.json({ success: true, message: "Key hợp lệ (thiết bị đã gán)" });
+
+  res.json({ success: false, message: "Key đã dùng trên thiết bị khác" });
+});
+
 app.listen(PORT, () =>
-  console.log(`✅ MINHSANG JSONBIN SERVER đang chạy tại cổng ${PORT}`)
+  console.log(`🚀 MINHSANG KEY SERVER chạy tại cổng ${PORT}`)
 );
