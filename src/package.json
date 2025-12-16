@@ -9,7 +9,8 @@
   "dependencies": {
     "fastify": "^4.25.2",
     "@fastify/cors": "^8.5.0",
-    "ws": "^8.16.0"
+    "ws": "^8.16.0",
+    "node-fetch": "^3.3.2"
   },
   "engines": {
     "node": ">=18.0.0"
