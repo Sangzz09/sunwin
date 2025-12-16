@@ -12,10 +12,10 @@ const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdT
 // --- GLOBAL STATE ---
 let results = [];
 let ws = null;
-let apiPollInterval = null;
 let reconnectTimeout = null;
 let wsConnected = false;
 let lastUpdateTime = null;
+let heartbeatInterval = null;
 
 // --- LOẠI CẦU ---
 const BRIDGE_TYPES = {
@@ -231,9 +231,179 @@ class SmartAI {
 
 const ai = new SmartAI();
 
-// --- FETCH DATA FROM API ---
-async function fetchLatestData() {
+// --- PARSE WS MESSAGE ---
+function parseWebSocketMessage(raw) {
   try {
+    const data = typeof raw === 'string' ? JSON.parse(raw) : JSON.parse(raw.toString('utf8'));
+    
+    // Log toàn bộ message để debug
+    console.log('📨 WS Raw:', JSON.stringify(data).substring(0, 200));
+    
+    // Các format có thể:
+    // Format 1: Array message [code, channel, ...]
+    if (Array.isArray(data)) {
+      console.log('📦 WS Array format:', data[0], data[1]);
+      
+      // Tìm object chứa session/dice trong array
+      for (const item of data) {
+        if (item && typeof item === 'object') {
+          if (item.session || item.sid || item.sessionId) {
+            return extractGameResult(item);
+          }
+          // Check nested data
+          if (item.data) {
+            const result = extractGameResult(item.data);
+            if (result) return result;
+          }
+        }
+      }
+    }
+    
+    // Format 2: Direct object
+    if (data.session || data.sid || data.sessionId) {
+      return extractGameResult(data);
+    }
+    
+    // Format 3: Nested in 'data' field
+    if (data.data) {
+      return extractGameResult(data.data);
+    }
+    
+    // Format 4: Result notification
+    if (data.result && typeof data.result === 'object') {
+      return extractGameResult(data.result);
+    }
+    
+    return null;
+  } catch (e) {
+    console.error('❌ WS Parse Error:', e.message);
+    return null;
+  }
+}
+
+function extractGameResult(obj) {
+  // Nhiều cách đặt tên khác nhau
+  const session = obj.session || obj.sid || obj.sessionId || obj.phien;
+  const dice = obj.dice || obj.dices || obj.xucxac || [obj.d1, obj.d2, obj.d3].filter(d => d !== undefined);
+  
+  if (!session || !dice || !Array.isArray(dice) || dice.length !== 3) {
+    return null;
+  }
+  
+  const total = dice.reduce((a, b) => a + b, 0);
+  const result = total >= 11 ? 'Tài' : 'Xỉu';
+  
+  console.log(`🎲 Extracted: #${session} | ${dice.join('-')} | ${total} | ${result}`);
+  
+  return {
+    session: Number(session),
+    dice: dice,
+    total: total,
+    result: result,
+    timestamp: new Date().toISOString()
+  };
+}
+
+// --- WEBSOCKET CONNECTION ---
+function connectWebSocket() {
+  if (ws) {
+    ws.removeAllListeners();
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      ws.close();
+    }
+    ws = null;
+  }
+  
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  
+  console.log(`🔌 Connecting WebSocket...`);
+
+  ws = new WebSocket(`${WS_URL}${TOKEN}`);
+
+  ws.on("open", () => {
+    wsConnected = true;
+    console.log(`✅ WebSocket CONNECTED`);
+    
+    // Auth message
+    const authMsg = [1, "MiniGame", "SC_giathinh2133", "thinh211", {
+      info: JSON.stringify({
+        ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
+        wsToken: TOKEN,
+        userId: "cdbaf598-e4ef-47f8-b4a6-a4881098db86",
+        username: "SC_hellokietne212",
+        timestamp: Date.now(),
+      }),
+      signature: "473ABDDDA6BDD74D8F0B6036223B0E3A002A518203A9BB9F95AD763E3BF969EC2CBBA61ED1A3A9E217B52A4055658D7BEA38F89B806285974C7F3F62A9400066709B4746585887D00C9796552671894F826E69EFD234F6778A5DDC24830CEF68D51217EF047644E0B0EB1CB26942EB34AEF114AEC36A6DF833BB10F7D122EA5E",
+      pid: 5,
+      subi: true,
+    }];
+    
+    ws.send(JSON.stringify(authMsg));
+    
+    // Subscribe to Tài Xỉu channel
+    setTimeout(() => {
+      const subMsg = [2, "MiniGame", "taixiu"];
+      ws.send(JSON.stringify(subMsg));
+      console.log('📡 Subscribed to taixiu channel');
+    }, 1000);
+    
+    // Heartbeat
+    heartbeatInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify([0])); // Ping message
+        console.log('💓 Heartbeat sent');
+      }
+    }, 30000); // 30 giây
+  });
+
+  ws.on("message", (data) => {
+    const gameResult = parseWebSocketMessage(data);
+    
+    if (gameResult) {
+      const currentLatest = results[0]?.session;
+      
+      // Chỉ thêm nếu là session mới
+      if (!currentLatest || gameResult.session > currentLatest) {
+        const parsed = ai.addResult(gameResult);
+        results.unshift(parsed);
+        
+        if (results.length > 100) {
+          results = results.slice(0, 100);
+        }
+        
+        lastUpdateTime = new Date().toISOString();
+        ai.savePredictionForNextSession(parsed.session);
+        
+        console.log(`✅ NEW RESULT: #${parsed.session} | ${parsed.dice.join('-')} | ${parsed.total} | ${parsed.result}`);
+      }
+    }
+  });
+
+  ws.on("close", () => {
+    console.log(`🔌 WebSocket CLOSED`);
+    wsConnected = false;
+    
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+    
+    reconnectTimeout = setTimeout(() => connectWebSocket(), 5000);
+  });
+
+  ws.on("error", (err) => {
+    console.error(`❌ WS Error:`, err.message);
+  });
+}
+
+// --- FETCH INITIAL DATA FROM API ---
+async function fetchInitialData() {
+  try {
+    console.log('🔄 Fetching initial data from API...');
+    
     const response = await fetch(`${API_URL}/MiniGame/taixiuPlugin`, {
       method: 'POST',
       headers: {
@@ -243,11 +413,13 @@ async function fetchLatestData() {
       body: JSON.stringify({ cmd: 1005 })
     });
 
-    if (!response.ok) return;
+    if (!response.ok) {
+      console.warn('⚠️ API returned status:', response.status);
+      return false;
+    }
     
     const data = await response.json();
     
-    // Parse history
     if (data.htr && Array.isArray(data.htr) && data.htr.length > 0) {
       const history = data.htr.map(i => ({
         session: i.sid,
@@ -257,23 +429,23 @@ async function fetchLatestData() {
         timestamp: new Date().toISOString()
       })).sort((a, b) => a.session - b.session);
 
-      const latestSession = history[history.length - 1]?.session;
-      const currentLatest = results[0]?.session;
-
-      if (!currentLatest || latestSession > currentLatest) {
-        ai.loadHistory(history);
-        results = history.slice(-100).reverse();
-        lastUpdateTime = new Date().toISOString();
-        
-        if (results[0]) {
-          ai.savePredictionForNextSession(results[0].session);
-        }
-        
-        console.log(`✅ Updated via API | Latest: #${results[0]?.session}`);
+      ai.loadHistory(history);
+      results = history.slice(-100).reverse();
+      lastUpdateTime = new Date().toISOString();
+      
+      if (results[0]) {
+        ai.savePredictionForNextSession(results[0].session);
       }
+      
+      console.log(`✅ Loaded ${results.length} results from API | Latest: #${results[0]?.session}`);
+      return true;
     }
+    
+    console.warn('⚠️ No history data in API response');
+    return false;
   } catch (error) {
     console.error('❌ API Fetch Error:', error.message);
+    return false;
   }
 }
 
@@ -309,6 +481,7 @@ app.get("/sunwinsew", async () => {
       tong: lastResult.total,
       phien_du_doan: nextSession,
       du_doan: prediction.prediction,
+      confidence: prediction.confidence,
       pattern: ai.getPattern(),
       loai_cau: ai.detectBridgeType(),
       thong_ke: ai.getStats()
@@ -317,6 +490,7 @@ app.get("/sunwinsew", async () => {
     console.error('❌ API Error:', error);
     return { 
       id: "@minhsangdangcap",
+      error: error.message,
       phien_hien_tai: null,
       ket_qua: null,
       tong: null,
@@ -368,10 +542,11 @@ app.get("/api/stats", async () => {
 
 app.get("/", async () => ({
   id: "@minhsangdangcap",
-  name: "Sunwin Tài Xỉu API v4.0",
-  version: "4.0",
+  name: "Sunwin Tài Xỉu API v4.1",
+  version: "4.1",
   status: "online",
-  data_source: "REST API + WebSocket",
+  websocket_status: wsConnected ? "connected" : "disconnected",
+  data_source: "WebSocket realtime",
   endpoints: {
     main: "/sunwinsew",
     history: "/api/taixiu/history",
@@ -384,69 +559,13 @@ console.log(`\n🚀 Server: http://localhost:${PORT}`);
 console.log(`📡 Main API: http://localhost:${PORT}/sunwinsew`);
 console.log(`📊 Stats: http://localhost:${PORT}/api/stats\n`);
 
-// --- POLLING API (PRIMARY METHOD) ---
-console.log('🔄 Starting API polling...');
-await fetchLatestData(); // Fetch ngay lập tức
+// --- KHỞI ĐỘNG ---
+console.log('🔄 Fetching initial data...');
+const hasData = await fetchInitialData();
 
-apiPollInterval = setInterval(async () => {
-  await fetchLatestData();
-}, 2000); // Poll mỗi 2 giây
-
-// --- WEBSOCKET (BACKUP METHOD) ---
-function connectWebSocket() {
-  if (ws) {
-    ws.removeAllListeners();
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      ws.close();
-    }
-    ws = null;
-  }
-  
-  console.log(`🔌 Connecting WebSocket...`);
-
-  ws = new WebSocket(`${WS_URL}${TOKEN}`);
-
-  ws.on("open", () => {
-    wsConnected = true;
-    console.log(`✅ WebSocket CONNECTED`);
-    
-    const authMsg = [1, "MiniGame", "SC_giathinh2133", "thinh211", {
-      info: JSON.stringify({
-        ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
-        wsToken: TOKEN,
-        userId: "cdbaf598-e4ef-47f8-b4a6-a4881098db86",
-        username: "SC_hellokietne212",
-        timestamp: Date.now(),
-      }),
-      signature: "473ABDDDA6BDD74D8F0B6036223B0E3A002A518203A9BB9F95AD763E3BF969EC2CBBA61ED1A3A9E217B52A4055658D7BEA38F89B806285974C7F3F62A9400066709B4746585887D00C9796552671894F826E69EFD234F6778A5DDC24830CEF68D51217EF047644E0B0EB1CB26942EB34AEF114AEC36A6DF833BB10F7D122EA5E",
-      pid: 5,
-      subi: true,
-    }];
-    
-    ws.send(JSON.stringify(authMsg));
-  });
-
-  ws.on("message", async (data) => {
-    try {
-      const raw = data instanceof Buffer ? data.toString('utf8') : data;
-      const json = JSON.parse(raw);
-
-      if (json.session && json.dice && Array.isArray(json.dice)) {
-        console.log(`📡 WS: New result detected, triggering API fetch...`);
-        await fetchLatestData();
-      }
-    } catch (e) {}
-  });
-
-  ws.on("close", () => {
-    console.log(`🔌 WebSocket CLOSED`);
-    wsConnected = false;
-    reconnectTimeout = setTimeout(() => connectWebSocket(), 5000);
-  });
-
-  ws.on("error", (err) => {
-    console.error(`❌ WS Error:`, err.message);
-  });
+if (!hasData) {
+  console.log('⚠️ No initial data, waiting for WebSocket...');
 }
 
+console.log('🔌 Starting WebSocket connection...');
 connectWebSocket();
