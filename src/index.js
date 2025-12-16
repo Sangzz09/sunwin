@@ -14,6 +14,7 @@ let intervalCmd = null;
 let wsConnected = false;
 let wsReconnectCount = 0;
 let lastUpdateTime = null;
+let historyLoaded = false;
 
 // --- LOẠI CẦU THỰC TẾ ---
 const BRIDGE_TYPES = {
@@ -38,7 +39,7 @@ class SmartAI {
   constructor() {
     this.history = [];
     this.stats = { total: 0, correct: 0, wrong: 0 };
-    this.lastPrediction = null;
+    this.pendingPrediction = null; // Dự đoán đang chờ kết quả
     this.predictionLog = [];
   }
 
@@ -102,7 +103,7 @@ class SmartAI {
     return null;
   }
 
-  // Dự đoán
+  // Dự đoán CHO PHIÊN TIẾP THEO
   predict() {
     if (this.history.length < 10) {
       return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'chưa đủ dữ liệu' };
@@ -141,7 +142,7 @@ class SmartAI {
     };
   }
 
-  // Thêm kết quả
+  // Thêm kết quả MỚI và kiểm tra prediction trước đó
   addResult(record) {
     const parsed = {
       session: Number(record.session),
@@ -149,13 +150,13 @@ class SmartAI {
       total: Number(record.total),
       result: record.result,
       tx: Number(record.total) >= 11 ? 'T' : 'X',
-      timestamp: new Date().toISOString()
+      timestamp: record.timestamp || new Date().toISOString()
     };
 
-    // Cập nhật thống kê
-    if (this.lastPrediction) {
+    // Kiểm tra nếu có pending prediction cho phiên này
+    if (this.pendingPrediction && this.pendingPrediction.forSession === parsed.session) {
       this.stats.total++;
-      const isCorrect = this.lastPrediction === parsed.tx;
+      const isCorrect = this.pendingPrediction.raw === parsed.tx;
       
       if (isCorrect) {
         this.stats.correct++;
@@ -166,7 +167,7 @@ class SmartAI {
       // Log prediction
       this.predictionLog.push({
         session: parsed.session,
-        predicted: this.lastPrediction,
+        predicted: this.pendingPrediction.raw,
         actual: parsed.tx,
         correct: isCorrect,
         timestamp: parsed.timestamp
@@ -177,9 +178,13 @@ class SmartAI {
         this.predictionLog = this.predictionLog.slice(-100);
       }
 
-      console.log(`📊 Phiên ${parsed.session}: Dự đoán ${this.lastPrediction} - Thực tế ${parsed.tx} - ${isCorrect ? '✅ ĐÚNG' : '❌ SAI'}`);
+      console.log(`📊 Phiên ${parsed.session}: Dự đoán ${this.pendingPrediction.raw} - Thực tế ${parsed.tx} - ${isCorrect ? '✅ ĐÚNG' : '❌ SAI'} | Tỷ lệ: ${this.stats.correct}/${this.stats.total}`);
+      
+      // Clear pending
+      this.pendingPrediction = null;
     }
 
+    // Thêm vào history
     this.history.push(parsed);
     if (this.history.length > 200) {
       this.history = this.history.slice(-150);
@@ -188,7 +193,7 @@ class SmartAI {
     return parsed;
   }
 
-  // Load lịch sử
+  // Load lịch sử (chỉ dùng 1 lần khi khởi động)
   loadHistory(historyData) {
     this.history = historyData.map(h => ({
       session: Number(h.session),
@@ -199,7 +204,19 @@ class SmartAI {
       timestamp: h.timestamp || new Date().toISOString()
     })).sort((a, b) => a.session - b.session);
 
-    console.log(`📚 Đã load ${this.history.length} kết quả vào AI`);
+    console.log(`📚 Đã load ${this.history.length} kết quả vào AI | Phiên: ${this.history[0]?.session} → ${this.history[this.history.length-1]?.session}`);
+  }
+
+  // Lưu prediction cho phiên TIẾP THEO
+  savePredictionForNextSession(currentSession) {
+    const pred = this.predict();
+    this.pendingPrediction = {
+      ...pred,
+      forSession: currentSession + 1, // Dự đoán cho phiên tiếp theo
+      createdAt: new Date().toISOString()
+    };
+    console.log(`🔮 Lưu dự đoán cho phiên ${currentSession + 1}: ${pred.raw} (${pred.prediction})`);
+    return pred;
   }
 
   // Phát hiện loại cầu
@@ -228,11 +245,6 @@ class SmartAI {
     return `${pattern} (T:${tCount} X:${xCount})`;
   }
 
-  // Lưu prediction
-  savePrediction(pred) {
-    this.lastPrediction = pred;
-  }
-
   // Lấy thống kê chi tiết
   getDetailedStats() {
     return {
@@ -252,6 +264,14 @@ class SmartAI {
         ket_qua: p.correct ? 'đúng' : 'sai'
       }))
     };
+  }
+
+  // Get prediction hiện tại (cho phiên tiếp theo)
+  getCurrentPrediction() {
+    if (!this.pendingPrediction) {
+      return this.predict();
+    }
+    return this.pendingPrediction;
   }
 }
 
@@ -285,8 +305,7 @@ app.get("/sunwinsew", async () => {
       };
     }
 
-    const prediction = ai.predict();
-    ai.savePrediction(prediction.raw);
+    const prediction = ai.getCurrentPrediction();
 
     return {
       id: "@minhsangdangcap",
@@ -295,6 +314,7 @@ app.get("/sunwinsew", async () => {
       xuc_xac: lastResult.dice,
       tong: lastResult.total,
       du_doan: prediction.prediction,
+      du_doan_cho_phien: lastResult.session + 1,
       pattern: ai.getPattern(),
       loai_cau: ai.detectBridgeType(),
       thong_ke: {
@@ -349,7 +369,8 @@ app.get("/api/stats", async () => {
     websocket: {
       connected: wsConnected,
       reconnect_count: wsReconnectCount,
-      last_update: lastUpdateTime
+      last_update: lastUpdateTime,
+      history_loaded: historyLoaded
     },
     data: {
       total_results: results.length,
@@ -364,8 +385,8 @@ app.get("/api/stats", async () => {
 // GET /
 app.get("/", async () => ({
   id: "@minhsangdangcap",
-  name: "Sunwin Tài Xỉu API Nâng Cấp",
-  version: "3.0",
+  name: "Sunwin Tài Xỉu API Fixed",
+  version: "3.1",
   status: "online",
   websocket: wsConnected ? "connected" : "disconnected",
   endpoints: {
@@ -403,9 +424,9 @@ function connect() {
 
   ws.on("open", () => {
     wsConnected = true;
-    console.log(`✅ [${new Date().toLocaleTimeString()}] WebSocket connected thành công!`);
+    console.log(`✅ [${new Date().toLocaleTimeString()}] WebSocket connected!`);
     
-    // Gửi auth ngay lập tức
+    // Auth
     ws.send(JSON.stringify([1, "MiniGame", "SC_giathinh2133", "thinh211", {
       info: JSON.stringify({
         ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
@@ -419,10 +440,10 @@ function connect() {
       subi: true,
     }]));
     
-    // Request dữ liệu ngay
+    // Request data ngay lập tức
     sendCmd();
     
-    // Ping mỗi 3s để nhận data nhanh hơn
+    // Ping mỗi 3s
     intervalCmd = setInterval(sendCmd, 3000);
   });
 
@@ -432,29 +453,8 @@ function connect() {
         ? JSON.parse(data) 
         : JSON.parse(new TextDecoder().decode(data));
 
-      // Kết quả mới - ưu tiên xử lý
-      if (json.session && json.dice && Array.isArray(json.dice)) {
-        const record = {
-          session: json.session,
-          dice: json.dice,
-          total: json.total,
-          result: json.result,
-          timestamp: new Date().toISOString()
-        };
-        
-        // Thêm vào AI và results ngay lập tức
-        ai.addResult(record);
-        results.unshift(record);
-        if (results.length > 100) results = results.slice(0, 100);
-
-        lastUpdateTime = new Date().toISOString();
-
-        const pred = ai.predict();
-        console.log(`\n📥 Phiên ${record.session}: ${record.result} (${record.total})`);
-        console.log(`🔮 Dự đoán: ${pred.prediction.toUpperCase()} | Đúng: ${ai.stats.correct}/${ai.stats.total}`);
-      }
-      // Lịch sử
-      else if (Array.isArray(json) && json[1]?.htr && Array.isArray(json[1].htr)) {
+      // ✅ LỊCH SỬ - Load trước tiên
+      if (!historyLoaded && Array.isArray(json) && json[1]?.htr && Array.isArray(json[1].htr)) {
         const history = json[1].htr.map(i => ({
           session: i.sid,
           dice: [i.d1, i.d2, i.d3],
@@ -466,15 +466,54 @@ function connect() {
         ai.loadHistory(history);
         results = history.slice(-100).reverse();
         lastUpdateTime = new Date().toISOString();
+        historyLoaded = true;
         
-        console.log(`📚 Đã load ${history.length} kết quả | Phiên: ${history[0].session} → ${history[history.length-1].session}`);
+        console.log(`📚 ✅ Load xong ${history.length} kết quả | Phiên: ${history[0].session} → ${history[history.length-1].session}`);
+        
+        // Tạo prediction cho phiên tiếp theo
+        if (results[0]) {
+          ai.savePredictionForNextSession(results[0].session);
+        }
+        return;
+      }
+
+      // ✅ KẾT QUẢ MỚI - Xử lý NGAY LẬP TỨC
+      if (json.session && json.dice && Array.isArray(json.dice)) {
+        const record = {
+          session: json.session,
+          dice: json.dice,
+          total: json.total,
+          result: json.result,
+          timestamp: new Date().toISOString()
+        };
+        
+        // Kiểm tra duplicate
+        if (results[0] && results[0].session === record.session) {
+          return; // Bỏ qua kết quả trùng
+        }
+        
+        // Thêm vào AI (sẽ tự động kiểm tra prediction)
+        const parsed = ai.addResult(record);
+        
+        // Thêm vào results
+        results.unshift(record);
+        if (results.length > 100) results = results.slice(0, 100);
+
+        lastUpdateTime = new Date().toISOString();
+
+        // Tạo prediction cho phiên tiếp theo
+        const nextPred = ai.savePredictionForNextSession(record.session);
+        
+        console.log(`\n📥 Phiên ${record.session}: ${record.result} (${record.total}) | ${parsed.tx}`);
+        console.log(`🔮 Dự đoán phiên ${record.session + 1}: ${nextPred.prediction.toUpperCase()}`);
+        console.log(`📈 Thống kê: ${ai.stats.correct}/${ai.stats.total} đúng (${ai.stats.total > 0 ? Math.round(ai.stats.correct/ai.stats.total*100) : 0}%)`);
       }
     } catch (e) {
-      // Bỏ qua message lỗi
+      // Bỏ qua lỗi parse
     }
   });
 
-  ws.on("close", (code, reason) => {
+  ws.on("close", (code) => {
     wsConnected = false;
     console.log(`🔌 [${new Date().toLocaleTimeString()}] WebSocket đã ngắt (code: ${code}). Kết nối lại sau 3s...`);
     clearInterval(intervalCmd);
