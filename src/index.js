@@ -269,19 +269,19 @@ app.get("/sunwinsew", async () => {
     if (!lastResult) {
       return {
         id: "@minhsangdangcap",
-        status: "đang chờ dữ liệu từ websocket",
-        websocket_status: wsConnected ? "connected" : "disconnected",
-        reconnect_count: wsReconnectCount,
-        last_update: lastUpdateTime,
         phien: null,
         ket_qua: null,
         xuc_xac: null,
         tong: null,
         du_doan: null,
-        do_tin_cay: null,
-        pattern: "chưa có dữ liệu",
-        loai_cau: "chưa có dữ liệu",
-        thong_ke: ai.getDetailedStats()
+        pattern: null,
+        loai_cau: null,
+        thong_ke: {
+          tong_du_doan: 0,
+          dung: 0,
+          sai: 0,
+          ty_le_dung: "0%"
+        }
       };
     }
 
@@ -290,29 +290,39 @@ app.get("/sunwinsew", async () => {
 
     return {
       id: "@minhsangdangcap",
-      status: "online",
-      websocket_status: wsConnected ? "connected" : "disconnected",
-      last_update: lastUpdateTime,
       phien: lastResult.session,
       ket_qua: lastResult.result.toLowerCase(),
       xuc_xac: lastResult.dice,
       tong: lastResult.total,
       du_doan: prediction.prediction,
-      do_tin_cay: `${prediction.confidence}%`,
-      ly_do: prediction.reason,
       pattern: ai.getPattern(),
       loai_cau: ai.detectBridgeType(),
-      thong_ke: ai.getDetailedStats(),
-      history_count: results.length,
-      ai_history_count: ai.history.length
+      thong_ke: {
+        tong_du_doan: ai.stats.total,
+        dung: ai.stats.correct,
+        sai: ai.stats.wrong,
+        ty_le_dung: ai.stats.total > 0 
+          ? `${Math.round((ai.stats.correct / ai.stats.total) * 100)}%` 
+          : '0%'
+      }
     };
   } catch (error) {
     console.error('❌ API Error:', error);
     return { 
       id: "@minhsangdangcap", 
-      status: "error",
-      error: error.message,
-      websocket_status: wsConnected ? "connected" : "disconnected"
+      phien: null,
+      ket_qua: null,
+      xuc_xac: null,
+      tong: null,
+      du_doan: null,
+      pattern: null,
+      loai_cau: null,
+      thong_ke: {
+        tong_du_doan: 0,
+        dung: 0,
+        sai: 0,
+        ty_le_dung: "0%"
+      }
     };
   }
 });
@@ -395,7 +405,7 @@ function connect() {
     wsConnected = true;
     console.log(`✅ [${new Date().toLocaleTimeString()}] WebSocket connected thành công!`);
     
-    // Gửi auth
+    // Gửi auth ngay lập tức
     ws.send(JSON.stringify([1, "MiniGame", "SC_giathinh2133", "thinh211", {
       info: JSON.stringify({
         ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
@@ -409,8 +419,11 @@ function connect() {
       subi: true,
     }]));
     
-    // Ping mỗi 5s
-    intervalCmd = setInterval(sendCmd, 5000);
+    // Request dữ liệu ngay
+    sendCmd();
+    
+    // Ping mỗi 3s để nhận data nhanh hơn
+    intervalCmd = setInterval(sendCmd, 3000);
   });
 
   ws.on("message", (data) => {
@@ -419,7 +432,7 @@ function connect() {
         ? JSON.parse(data) 
         : JSON.parse(new TextDecoder().decode(data));
 
-      // Kết quả mới
+      // Kết quả mới - ưu tiên xử lý
       if (json.session && json.dice && Array.isArray(json.dice)) {
         const record = {
           session: json.session,
@@ -429,6 +442,7 @@ function connect() {
           timestamp: new Date().toISOString()
         };
         
+        // Thêm vào AI và results ngay lập tức
         ai.addResult(record);
         results.unshift(record);
         if (results.length > 100) results = results.slice(0, 100);
@@ -436,9 +450,8 @@ function connect() {
         lastUpdateTime = new Date().toISOString();
 
         const pred = ai.predict();
-        console.log(`\n📥 [${new Date().toLocaleTimeString()}] Phiên ${record.session}: ${record.result} (${record.total}) ${JSON.stringify(record.dice)}`);
-        console.log(`🔮 Dự đoán tiếp theo: ${pred.prediction.toUpperCase()} (${pred.confidence}%) - ${pred.reason}`);
-        console.log(`📊 Thống kê: ${ai.stats.correct}/${ai.stats.total} đúng (${ai.stats.total > 0 ? Math.round((ai.stats.correct/ai.stats.total)*100) : 0}%)`);
+        console.log(`\n📥 Phiên ${record.session}: ${record.result} (${record.total})`);
+        console.log(`🔮 Dự đoán: ${pred.prediction.toUpperCase()} | Đúng: ${ai.stats.correct}/${ai.stats.total}`);
       }
       // Lịch sử
       else if (Array.isArray(json) && json[1]?.htr && Array.isArray(json[1].htr)) {
@@ -454,11 +467,10 @@ function connect() {
         results = history.slice(-100).reverse();
         lastUpdateTime = new Date().toISOString();
         
-        console.log(`📚 [${new Date().toLocaleTimeString()}] Đã load ${history.length} kết quả lịch sử`);
-        console.log(`📊 Phiên cũ nhất: ${history[0].session}, Phiên mới nhất: ${history[history.length-1].session}`);
+        console.log(`📚 Đã load ${history.length} kết quả | Phiên: ${history[0].session} → ${history[history.length-1].session}`);
       }
     } catch (e) {
-      // Bỏ qua các message không parse được
+      // Bỏ qua message lỗi
     }
   });
 
