@@ -1,0 +1,31 @@
+{
+  "name": "taixiu-ai",
+  "version": "2.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "fastify": "^4.25.2",
+    "@fastify/cors": "^8.5.0",
+    "ws": "^8.16.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+```
+
+### 2. **Cấu trúc thư mục:**
+```
+├── index.js          (code AI đã tối ưu)
+├── package.json      (file trên)
+└── .gitignore
+```
+
+### 3. **File `.gitignore`:**
+```
+node_modules/
+.env
+*.log
