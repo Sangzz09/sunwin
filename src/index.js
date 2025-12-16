@@ -10,13 +10,15 @@ const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdT
 // --- GLOBAL STATE ---
 let results = [];
 let ws = null;
-let intervalCmd = null;
+let pingInterval = null;
+let reconnectTimeout = null;
 let wsConnected = false;
 let wsReconnectCount = 0;
 let lastUpdateTime = null;
 let historyLoaded = false;
+let lastProcessedSession = null;
 
-// --- LOẠI CẦU THỰC TẾ ---
+// --- LOẠI CẦU ---
 const BRIDGE_TYPES = {
   'cầu đơn tài': { pattern: /t$/, description: '1 kết quả Tài' },
   'cầu đơn xỉu': { pattern: /x$/, description: '1 kết quả Xỉu' },
@@ -39,23 +41,19 @@ class SmartAI {
   constructor() {
     this.history = [];
     this.stats = { total: 0, correct: 0, wrong: 0 };
-    this.pendingPrediction = null; // Dự đoán đang chờ kết quả
+    this.pendingPrediction = null;
     this.predictionLog = [];
   }
 
-  // Thuật toán 1: Phân tích Pattern
   analyzePattern(history) {
     if (history.length < 10) return null;
-    
     const recent = history.slice(-8).map(h => h.tx.toLowerCase()).join('');
     const fullHistory = history.slice(-30).map(h => h.tx.toLowerCase()).join('');
-    
     let tScore = 0, xScore = 0;
     
     for (let len = 3; len <= 5; len++) {
       if (recent.length < len) continue;
       const pattern = recent.slice(-len);
-      
       for (let i = 0; i <= fullHistory.length - len - 1; i++) {
         if (fullHistory.substr(i, len) === pattern) {
           const next = fullHistory.charAt(i + len);
@@ -70,14 +68,12 @@ class SmartAI {
     return null;
   }
 
-  // Thuật toán 2: Phát hiện cầu
   detectBridge(history) {
     if (history.length < 5) return null;
-    
     const recent = history.slice(-5).map(h => h.tx);
     const last = recent[recent.length - 1];
-    
     let runLength = 1;
+    
     for (let i = recent.length - 2; i >= 0; i--) {
       if (recent[i] === last) runLength++;
       else break;
@@ -85,43 +81,37 @@ class SmartAI {
     
     if (runLength >= 2 && runLength <= 3) return last;
     if (runLength >= 4) return last === 'T' ? 'X' : 'T';
-    
     return null;
   }
 
-  // Thuật toán 3: Xu hướng tổng điểm
   analyzeTrend(history) {
     if (history.length < 15) return null;
-    
     const totals = history.slice(-15).map(h => h.total);
     const avg = totals.reduce((a, b) => a + b) / totals.length;
     const recentAvg = totals.slice(-5).reduce((a, b) => a + b) / 5;
     
     if (recentAvg > avg + 0.8) return 'X';
     if (recentAvg < avg - 0.8) return 'T';
-    
     return null;
   }
 
-  // Dự đoán CHO PHIÊN TIẾP THEO
   predict() {
     if (this.history.length < 10) {
       return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'chưa đủ dữ liệu' };
     }
 
     const predictions = [];
-    
     const p1 = this.analyzePattern(this.history);
-    if (p1) predictions.push({ pred: p1, weight: 2, reason: 'pattern matching' });
+    if (p1) predictions.push({ pred: p1, weight: 2, reason: 'pattern' });
     
     const p2 = this.detectBridge(this.history);
-    if (p2) predictions.push({ pred: p2, weight: 1.5, reason: 'bridge detection' });
+    if (p2) predictions.push({ pred: p2, weight: 1.5, reason: 'bridge' });
     
     const p3 = this.analyzeTrend(this.history);
-    if (p3) predictions.push({ pred: p3, weight: 1, reason: 'trend analysis' });
+    if (p3) predictions.push({ pred: p3, weight: 1, reason: 'trend' });
     
     if (predictions.length === 0) {
-      return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'không có tín hiệu rõ ràng' };
+      return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'no signal' };
     }
 
     let tVotes = 0, xVotes = 0;
@@ -142,7 +132,6 @@ class SmartAI {
     };
   }
 
-  // Thêm kết quả MỚI và kiểm tra prediction trước đó
   addResult(record) {
     const parsed = {
       session: Number(record.session),
@@ -153,18 +142,13 @@ class SmartAI {
       timestamp: record.timestamp || new Date().toISOString()
     };
 
-    // Kiểm tra nếu có pending prediction cho phiên này
     if (this.pendingPrediction && this.pendingPrediction.forSession === parsed.session) {
       this.stats.total++;
       const isCorrect = this.pendingPrediction.raw === parsed.tx;
       
-      if (isCorrect) {
-        this.stats.correct++;
-      } else {
-        this.stats.wrong++;
-      }
+      if (isCorrect) this.stats.correct++;
+      else this.stats.wrong++;
 
-      // Log prediction
       this.predictionLog.push({
         session: parsed.session,
         predicted: this.pendingPrediction.raw,
@@ -173,18 +157,14 @@ class SmartAI {
         timestamp: parsed.timestamp
       });
 
-      // Giữ 100 log gần nhất
       if (this.predictionLog.length > 100) {
         this.predictionLog = this.predictionLog.slice(-100);
       }
 
-      console.log(`📊 Phiên ${parsed.session}: Dự đoán ${this.pendingPrediction.raw} - Thực tế ${parsed.tx} - ${isCorrect ? '✅ ĐÚNG' : '❌ SAI'} | Tỷ lệ: ${this.stats.correct}/${this.stats.total}`);
-      
-      // Clear pending
+      console.log(`📊 #${parsed.session}: Dự đoán ${this.pendingPrediction.raw} → Thực tế ${parsed.tx} ${isCorrect ? '✅' : '❌'} | ${this.stats.correct}/${this.stats.total} (${Math.round(this.stats.correct/this.stats.total*100)}%)`);
       this.pendingPrediction = null;
     }
 
-    // Thêm vào history
     this.history.push(parsed);
     if (this.history.length > 200) {
       this.history = this.history.slice(-150);
@@ -193,7 +173,6 @@ class SmartAI {
     return parsed;
   }
 
-  // Load lịch sử (chỉ dùng 1 lần khi khởi động)
   loadHistory(historyData) {
     this.history = historyData.map(h => ({
       session: Number(h.session),
@@ -204,59 +183,45 @@ class SmartAI {
       timestamp: h.timestamp || new Date().toISOString()
     })).sort((a, b) => a.session - b.session);
 
-    console.log(`📚 Đã load ${this.history.length} kết quả vào AI | Phiên: ${this.history[0]?.session} → ${this.history[this.history.length-1]?.session}`);
+    console.log(`📚 Load ${this.history.length} phiên | ${this.history[0]?.session} → ${this.history[this.history.length-1]?.session}`);
   }
 
-  // Lưu prediction cho phiên TIẾP THEO
   savePredictionForNextSession(currentSession) {
     const pred = this.predict();
     this.pendingPrediction = {
       ...pred,
-      forSession: currentSession + 1, // Dự đoán cho phiên tiếp theo
+      forSession: currentSession + 1,
       createdAt: new Date().toISOString()
     };
-    console.log(`🔮 Lưu dự đoán cho phiên ${currentSession + 1}: ${pred.raw} (${pred.prediction})`);
+    console.log(`🔮 Dự đoán #${currentSession + 1}: ${pred.raw} (${pred.prediction})`);
     return pred;
   }
 
-  // Phát hiện loại cầu
   detectBridgeType() {
     if (this.history.length < 5) return 'chưa đủ dữ liệu';
-    
     const recent = this.history.slice(-5).map(h => h.tx.toLowerCase()).join('');
     
     for (const [name, info] of Object.entries(BRIDGE_TYPES)) {
-      if (info.pattern.test(recent)) {
-        return `${name} (${info.description})`;
-      }
+      if (info.pattern.test(recent)) return `${name} (${info.description})`;
     }
-    
     return 'cầu hỗn hợp';
   }
 
-  // Lấy pattern chi tiết
   getPattern() {
-    if (this.history.length < 10) return 'đang thu thập dữ liệu';
-    
+    if (this.history.length < 10) return 'đang thu thập';
     const pattern = this.history.slice(-20).map(h => h.tx).join('');
     const tCount = (pattern.match(/T/g) || []).length;
     const xCount = (pattern.match(/X/g) || []).length;
-    
     return `${pattern} (T:${tCount} X:${xCount})`;
   }
 
-  // Lấy thống kê chi tiết
   getDetailedStats() {
     return {
       tong_du_doan: this.stats.total,
       dung: this.stats.correct,
       sai: this.stats.wrong,
-      ty_le_dung: this.stats.total > 0 
-        ? `${Math.round((this.stats.correct / this.stats.total) * 100)}%` 
-        : '0%',
-      ty_le_sai: this.stats.total > 0 
-        ? `${Math.round((this.stats.wrong / this.stats.total) * 100)}%` 
-        : '0%',
+      ty_le_dung: this.stats.total > 0 ? `${Math.round((this.stats.correct / this.stats.total) * 100)}%` : '0%',
+      ty_le_sai: this.stats.total > 0 ? `${Math.round((this.stats.wrong / this.stats.total) * 100)}%` : '0%',
       recent_10: this.predictionLog.slice(-10).map(p => ({
         phien: p.session,
         du_doan: p.predicted === 'T' ? 'tài' : 'xỉu',
@@ -266,11 +231,8 @@ class SmartAI {
     };
   }
 
-  // Get prediction hiện tại (cho phiên tiếp theo)
   getCurrentPrediction() {
-    if (!this.pendingPrediction) {
-      return this.predict();
-    }
+    if (!this.pendingPrediction) return this.predict();
     return this.pendingPrediction;
   }
 }
@@ -281,7 +243,6 @@ const ai = new SmartAI();
 const app = fastify({ logger: false });
 await app.register(cors, { origin: "*" });
 
-// GET /sunwinsew - Endpoint chính
 app.get("/sunwinsew", async () => {
   try {
     const lastResult = results[0];
@@ -289,65 +250,55 @@ app.get("/sunwinsew", async () => {
     if (!lastResult) {
       return {
         id: "@minhsangdangcap",
-        phien: null,
+        phien_hien_tai: null,
+        phien_du_doan: null,
+        du_doan: null,
         ket_qua: null,
         xuc_xac: null,
         tong: null,
-        du_doan: null,
         pattern: null,
         loai_cau: null,
-        thong_ke: {
-          tong_du_doan: 0,
-          dung: 0,
-          sai: 0,
-          ty_le_dung: "0%"
-        }
+        thong_ke: { tong_du_doan: 0, dung: 0, sai: 0, ty_le_dung: "0%" }
       };
     }
 
     const prediction = ai.getCurrentPrediction();
+    const nextSession = lastResult.session + 1;
 
     return {
       id: "@minhsangdangcap",
-      phien: lastResult.session,
+      phien_hien_tai: lastResult.session,
+      phien_du_doan: nextSession,
+      du_doan: prediction.prediction,
       ket_qua: lastResult.result.toLowerCase(),
       xuc_xac: lastResult.dice,
       tong: lastResult.total,
-      du_doan: prediction.prediction,
-      du_doan_cho_phien: lastResult.session + 1,
       pattern: ai.getPattern(),
       loai_cau: ai.detectBridgeType(),
       thong_ke: {
         tong_du_doan: ai.stats.total,
         dung: ai.stats.correct,
         sai: ai.stats.wrong,
-        ty_le_dung: ai.stats.total > 0 
-          ? `${Math.round((ai.stats.correct / ai.stats.total) * 100)}%` 
-          : '0%'
+        ty_le_dung: ai.stats.total > 0 ? `${Math.round((ai.stats.correct / ai.stats.total) * 100)}%` : '0%'
       }
     };
   } catch (error) {
     console.error('❌ API Error:', error);
     return { 
-      id: "@minhsangdangcap", 
-      phien: null,
+      id: "@minhsangdangcap",
+      phien_hien_tai: null,
+      phien_du_doan: null,
+      du_doan: null,
       ket_qua: null,
       xuc_xac: null,
       tong: null,
-      du_doan: null,
       pattern: null,
       loai_cau: null,
-      thong_ke: {
-        tong_du_doan: 0,
-        dung: 0,
-        sai: 0,
-        ty_le_dung: "0%"
-      }
+      thong_ke: { tong_du_doan: 0, dung: 0, sai: 0, ty_le_dung: "0%" }
     };
   }
 });
 
-// GET /api/taixiu/history
 app.get("/api/taixiu/history", async () => {
   return {
     id: "@minhsangdangcap",
@@ -362,7 +313,6 @@ app.get("/api/taixiu/history", async () => {
   };
 });
 
-// GET /api/stats
 app.get("/api/stats", async () => {
   return {
     id: "@minhsangdangcap",
@@ -382,11 +332,10 @@ app.get("/api/stats", async () => {
   };
 });
 
-// GET /
 app.get("/", async () => ({
   id: "@minhsangdangcap",
-  name: "Sunwin Tài Xỉu API Fixed",
-  version: "3.1",
+  name: "Sunwin Tài Xỉu API v3.2",
+  version: "3.2",
   status: "online",
   websocket: wsConnected ? "connected" : "disconnected",
   endpoints: {
@@ -396,38 +345,61 @@ app.get("/", async () => ({
   }
 }));
 
-// --- SERVER START ---
 await app.listen({ port: PORT, host: "0.0.0.0" });
-console.log(`\n🚀 Server đang chạy tại http://localhost:${PORT}`);
-console.log(`📡 API chính: http://localhost:${PORT}/sunwinsew`);
-console.log(`📊 Thống kê: http://localhost:${PORT}/api/stats`);
-console.log(`📚 Lịch sử: http://localhost:${PORT}/api/taixiu/history\n`);
+console.log(`\n🚀 Server: http://localhost:${PORT}`);
+console.log(`📡 Main API: http://localhost:${PORT}/sunwinsew`);
+console.log(`📊 Stats: http://localhost:${PORT}/api/stats\n`);
 
-// --- WEBSOCKET ---
-function sendCmd() {
+// --- WEBSOCKET IMPROVED ---
+function sendPing() {
   if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
+    try {
+      ws.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
+      console.log(`🏓 Ping sent [${new Date().toLocaleTimeString()}]`);
+    } catch (e) {
+      console.error('❌ Ping error:', e.message);
+    }
   }
 }
 
-function connect() {
-  console.log(`🔌 [${new Date().toLocaleTimeString()}] Đang kết nối WebSocket... (lần ${wsReconnectCount + 1})`);
-  
+function cleanup() {
   if (ws) {
     ws.removeAllListeners();
-    ws.close();
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      ws.close();
+    }
+    ws = null;
   }
-  clearInterval(intervalCmd);
+  if (pingInterval) {
+    clearInterval(pingInterval);
+    pingInterval = null;
+  }
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
   wsConnected = false;
+}
 
-  ws = new WebSocket(`${WS_URL}${TOKEN}`);
+function connect() {
+  cleanup();
+  
+  console.log(`🔌 [${new Date().toLocaleTimeString()}] Connecting WebSocket (attempt ${wsReconnectCount + 1})...`);
+
+  ws = new WebSocket(`${WS_URL}${TOKEN}`, {
+    handshakeTimeout: 10000,
+    perMessageDeflate: false
+  });
+
+  let isAlive = true;
 
   ws.on("open", () => {
     wsConnected = true;
-    console.log(`✅ [${new Date().toLocaleTimeString()}] WebSocket connected!`);
+    isAlive = true;
+    console.log(`✅ [${new Date().toLocaleTimeString()}] WebSocket CONNECTED!`);
     
-    // Auth
-    ws.send(JSON.stringify([1, "MiniGame", "SC_giathinh2133", "thinh211", {
+    // Auth message
+    const authMsg = [1, "MiniGame", "SC_giathinh2133", "thinh211", {
       info: JSON.stringify({
         ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
         wsToken: TOKEN,
@@ -438,22 +410,30 @@ function connect() {
       signature: "473ABDDDA6BDD74D8F0B6036223B0E3A002A518203A9BB9F95AD763E3BF969EC2CBBA61ED1A3A9E217B52A4055658D7BEA38F89B806285974C7F3F62A9400066709B4746585887D00C9796552671894F826E69EFD234F6778A5DDC24830CEF68D51217EF047644E0B0EB1CB26942EB34AEF114AEC36A6DF833BB10F7D122EA5E",
       pid: 5,
       subi: true,
-    }]));
+    }];
     
-    // Request data ngay lập tức
-    sendCmd();
+    ws.send(JSON.stringify(authMsg));
+    console.log('🔐 Auth sent');
     
-    // Ping mỗi 3s
-    intervalCmd = setInterval(sendCmd, 3000);
+    // Request data immediately
+    setTimeout(() => sendPing(), 500);
+    
+    // Ping every 2 seconds
+    pingInterval = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN && isAlive) {
+        sendPing();
+      }
+    }, 2000);
   });
 
   ws.on("message", (data) => {
+    isAlive = true;
+    
     try {
-      const json = typeof data === "string" 
-        ? JSON.parse(data) 
-        : JSON.parse(new TextDecoder().decode(data));
+      const raw = data instanceof Buffer ? data.toString('utf8') : data;
+      const json = JSON.parse(raw);
 
-      // ✅ LỊCH SỬ - Load trước tiên
+      // History data
       if (!historyLoaded && Array.isArray(json) && json[1]?.htr && Array.isArray(json[1].htr)) {
         const history = json[1].htr.map(i => ({
           session: i.sid,
@@ -467,65 +447,73 @@ function connect() {
         results = history.slice(-100).reverse();
         lastUpdateTime = new Date().toISOString();
         historyLoaded = true;
+        lastProcessedSession = results[0]?.session;
         
-        console.log(`📚 ✅ Load xong ${history.length} kết quả | Phiên: ${history[0].session} → ${history[history.length-1].session}`);
+        console.log(`✅ History loaded: ${history.length} sessions`);
         
-        // Tạo prediction cho phiên tiếp theo
         if (results[0]) {
           ai.savePredictionForNextSession(results[0].session);
         }
         return;
       }
 
-      // ✅ KẾT QUẢ MỚI - Xử lý NGAY LẬP TỨC
-      if (json.session && json.dice && Array.isArray(json.dice)) {
+      // New result - REAL TIME
+      if (json.session && json.dice && Array.isArray(json.dice) && json.dice.length === 3) {
+        const sessionNum = Number(json.session);
+        
+        // Skip duplicate
+        if (lastProcessedSession && sessionNum <= lastProcessedSession) {
+          return;
+        }
+        
         const record = {
-          session: json.session,
+          session: sessionNum,
           dice: json.dice,
-          total: json.total,
-          result: json.result,
+          total: json.total || json.dice.reduce((a, b) => a + b, 0),
+          result: json.result || (json.total >= 11 ? "Tài" : "Xỉu"),
           timestamp: new Date().toISOString()
         };
         
-        // Kiểm tra duplicate
-        if (results[0] && results[0].session === record.session) {
-          return; // Bỏ qua kết quả trùng
-        }
+        console.log(`\n📥 NEW RESULT #${record.session}: ${record.result} (${record.total}) [${record.dice.join('-')}]`);
         
-        // Thêm vào AI (sẽ tự động kiểm tra prediction)
-        const parsed = ai.addResult(record);
-        
-        // Thêm vào results
+        // Process
+        ai.addResult(record);
         results.unshift(record);
         if (results.length > 100) results = results.slice(0, 100);
-
-        lastUpdateTime = new Date().toISOString();
-
-        // Tạo prediction cho phiên tiếp theo
-        const nextPred = ai.savePredictionForNextSession(record.session);
         
-        console.log(`\n📥 Phiên ${record.session}: ${record.result} (${record.total}) | ${parsed.tx}`);
-        console.log(`🔮 Dự đoán phiên ${record.session + 1}: ${nextPred.prediction.toUpperCase()}`);
-        console.log(`📈 Thống kê: ${ai.stats.correct}/${ai.stats.total} đúng (${ai.stats.total > 0 ? Math.round(ai.stats.correct/ai.stats.total*100) : 0}%)`);
+        lastUpdateTime = new Date().toISOString();
+        lastProcessedSession = sessionNum;
+        
+        // Next prediction
+        const nextPred = ai.savePredictionForNextSession(record.session);
+        console.log(`🎯 Next: ${nextPred.prediction.toUpperCase()}`);
       }
     } catch (e) {
-      // Bỏ qua lỗi parse
+      // Silent
     }
   });
 
-  ws.on("close", (code) => {
-    wsConnected = false;
-    console.log(`🔌 [${new Date().toLocaleTimeString()}] WebSocket đã ngắt (code: ${code}). Kết nối lại sau 3s...`);
-    clearInterval(intervalCmd);
+  ws.on("ping", () => {
+    isAlive = true;
+  });
+
+  ws.on("pong", () => {
+    isAlive = true;
+  });
+
+  ws.on("close", (code, reason) => {
+    console.log(`🔌 [${new Date().toLocaleTimeString()}] WebSocket CLOSED (code: ${code})`);
+    cleanup();
     wsReconnectCount++;
-    setTimeout(connect, 3000);
+    reconnectTimeout = setTimeout(() => connect(), 3000);
   });
 
   ws.on("error", (err) => {
-    wsConnected = false;
-    console.error(`❌ [${new Date().toLocaleTimeString()}] WebSocket error:`, err.message);
+    console.error(`❌ [${new Date().toLocaleTimeString()}] WS Error:`, err.message);
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.close();
+    }
   });
 }
 
-// Khởi động WebSocket
 connect();
