@@ -11,17 +11,26 @@ const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdT
 let results = [];
 let ws = null;
 let intervalCmd = null;
+let wsConnected = false;
+let wsReconnectCount = 0;
+let lastUpdateTime = null;
 
 // --- LOẠI CẦU THỰC TẾ ---
 const BRIDGE_TYPES = {
-  'cầu đơn': { pattern: /^(t|x)$/, description: '1 kết quả' },
-  'cầu 2': { pattern: /^(tt|xx)$/, description: '2 liên tiếp' },
-  'cầu 3': { pattern: /^(ttt|xxx)$/, description: '3 liên tiếp' },
-  'cầu 4': { pattern: /^(tttt|xxxx)$/, description: '4 liên tiếp' },
-  'cầu 5+': { pattern: /^(t{5,}|x{5,})$/, description: '5+ liên tiếp' },
-  'lưỡng cầu 1-1': { pattern: /^(tx|xt)$/, description: 'Đổi chiều mỗi phiên' },
-  'lưỡng cầu 2-2': { pattern: /^(ttxx|xxtt)$/, description: '2T-2X hoặc ngược lại' },
-  'lưỡng cầu 1-2': { pattern: /^(txx|xtt)$/, description: '1-2 hoặc 2-1' },
+  'cầu đơn tài': { pattern: /t$/, description: '1 kết quả Tài' },
+  'cầu đơn xỉu': { pattern: /x$/, description: '1 kết quả Xỉu' },
+  'cầu 2 tài': { pattern: /tt$/, description: '2 Tài liên tiếp' },
+  'cầu 2 xỉu': { pattern: /xx$/, description: '2 Xỉu liên tiếp' },
+  'cầu 3 tài': { pattern: /ttt$/, description: '3 Tài liên tiếp' },
+  'cầu 3 xỉu': { pattern: /xxx$/, description: '3 Xỉu liên tiếp' },
+  'cầu 4 tài': { pattern: /tttt$/, description: '4 Tài liên tiếp' },
+  'cầu 4 xỉu': { pattern: /xxxx$/, description: '4 Xỉu liên tiếp' },
+  'cầu 5+ tài': { pattern: /t{5,}$/, description: '5+ Tài liên tiếp' },
+  'cầu 5+ xỉu': { pattern: /x{5,}$/, description: '5+ Xỉu liên tiếp' },
+  'lưỡng cầu 1-1': { pattern: /(tx|xt)$/, description: 'Đổi chiều mỗi phiên' },
+  'lưỡng cầu 2-2': { pattern: /(ttxx|xxtt)$/, description: '2T-2X hoặc 2X-2T' },
+  'lưỡng cầu 1-2': { pattern: /(txx|xtt)$/, description: '1T-2X hoặc 1X-2T' },
+  'lưỡng cầu 2-1': { pattern: /(ttx|xxt)$/, description: '2T-1X hoặc 2X-1T' },
 };
 
 // --- AI CORE ---
@@ -30,6 +39,7 @@ class SmartAI {
     this.history = [];
     this.stats = { total: 0, correct: 0, wrong: 0 };
     this.lastPrediction = null;
+    this.predictionLog = [];
   }
 
   // Thuật toán 1: Phân tích Pattern
@@ -39,7 +49,6 @@ class SmartAI {
     const recent = history.slice(-8).map(h => h.tx.toLowerCase()).join('');
     const fullHistory = history.slice(-30).map(h => h.tx.toLowerCase()).join('');
     
-    // Đếm pattern matching
     let tScore = 0, xScore = 0;
     
     for (let len = 3; len <= 5; len++) {
@@ -73,10 +82,7 @@ class SmartAI {
       else break;
     }
     
-    // Theo cầu nếu độ dài 2-3
     if (runLength >= 2 && runLength <= 3) return last;
-    
-    // Bẻ cầu nếu độ dài >= 4
     if (runLength >= 4) return last === 'T' ? 'X' : 'T';
     
     return null;
@@ -90,8 +96,8 @@ class SmartAI {
     const avg = totals.reduce((a, b) => a + b) / totals.length;
     const recentAvg = totals.slice(-5).reduce((a, b) => a + b) / 5;
     
-    if (recentAvg > avg + 0.8) return 'X'; // Xu hướng giảm
-    if (recentAvg < avg - 0.8) return 'T'; // Xu hướng tăng
+    if (recentAvg > avg + 0.8) return 'X';
+    if (recentAvg < avg - 0.8) return 'T';
     
     return null;
   }
@@ -99,22 +105,22 @@ class SmartAI {
   // Dự đoán
   predict() {
     if (this.history.length < 10) {
-      return { prediction: 'tài', confidence: 50, raw: 'T' };
+      return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'chưa đủ dữ liệu' };
     }
 
     const predictions = [];
     
     const p1 = this.analyzePattern(this.history);
-    if (p1) predictions.push({ pred: p1, weight: 2 });
+    if (p1) predictions.push({ pred: p1, weight: 2, reason: 'pattern matching' });
     
     const p2 = this.detectBridge(this.history);
-    if (p2) predictions.push({ pred: p2, weight: 1.5 });
+    if (p2) predictions.push({ pred: p2, weight: 1.5, reason: 'bridge detection' });
     
     const p3 = this.analyzeTrend(this.history);
-    if (p3) predictions.push({ pred: p3, weight: 1 });
+    if (p3) predictions.push({ pred: p3, weight: 1, reason: 'trend analysis' });
     
     if (predictions.length === 0) {
-      return { prediction: 'tài', confidence: 50, raw: 'T' };
+      return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'không có tín hiệu rõ ràng' };
     }
 
     let tVotes = 0, xVotes = 0;
@@ -130,7 +136,8 @@ class SmartAI {
     return {
       prediction: finalPred === 'T' ? 'tài' : 'xỉu',
       confidence: Math.min(95, Math.max(55, confidence)),
-      raw: finalPred
+      raw: finalPred,
+      reason: predictions.map(p => p.reason).join(', ')
     };
   }
 
@@ -141,17 +148,36 @@ class SmartAI {
       dice: record.dice,
       total: Number(record.total),
       result: record.result,
-      tx: Number(record.total) >= 11 ? 'T' : 'X'
+      tx: Number(record.total) >= 11 ? 'T' : 'X',
+      timestamp: new Date().toISOString()
     };
 
     // Cập nhật thống kê
     if (this.lastPrediction) {
       this.stats.total++;
-      if (this.lastPrediction === parsed.tx) {
+      const isCorrect = this.lastPrediction === parsed.tx;
+      
+      if (isCorrect) {
         this.stats.correct++;
       } else {
         this.stats.wrong++;
       }
+
+      // Log prediction
+      this.predictionLog.push({
+        session: parsed.session,
+        predicted: this.lastPrediction,
+        actual: parsed.tx,
+        correct: isCorrect,
+        timestamp: parsed.timestamp
+      });
+
+      // Giữ 100 log gần nhất
+      if (this.predictionLog.length > 100) {
+        this.predictionLog = this.predictionLog.slice(-100);
+      }
+
+      console.log(`📊 Phiên ${parsed.session}: Dự đoán ${this.lastPrediction} - Thực tế ${parsed.tx} - ${isCorrect ? '✅ ĐÚNG' : '❌ SAI'}`);
     }
 
     this.history.push(parsed);
@@ -169,8 +195,11 @@ class SmartAI {
       dice: h.dice,
       total: Number(h.total),
       result: h.result,
-      tx: Number(h.total) >= 11 ? 'T' : 'X'
+      tx: Number(h.total) >= 11 ? 'T' : 'X',
+      timestamp: h.timestamp || new Date().toISOString()
     })).sort((a, b) => a.session - b.session);
+
+    console.log(`📚 Đã load ${this.history.length} kết quả vào AI`);
   }
 
   // Phát hiện loại cầu
@@ -181,22 +210,48 @@ class SmartAI {
     
     for (const [name, info] of Object.entries(BRIDGE_TYPES)) {
       if (info.pattern.test(recent)) {
-        return name;
+        return `${name} (${info.description})`;
       }
     }
     
     return 'cầu hỗn hợp';
   }
 
-  // Lấy pattern
+  // Lấy pattern chi tiết
   getPattern() {
-    if (this.history.length < 10) return 'đang thu thập';
-    return this.history.slice(-15).map(h => h.tx).join('');
+    if (this.history.length < 10) return 'đang thu thập dữ liệu';
+    
+    const pattern = this.history.slice(-20).map(h => h.tx).join('');
+    const tCount = (pattern.match(/T/g) || []).length;
+    const xCount = (pattern.match(/X/g) || []).length;
+    
+    return `${pattern} (T:${tCount} X:${xCount})`;
   }
 
   // Lưu prediction
   savePrediction(pred) {
     this.lastPrediction = pred;
+  }
+
+  // Lấy thống kê chi tiết
+  getDetailedStats() {
+    return {
+      tong_du_doan: this.stats.total,
+      dung: this.stats.correct,
+      sai: this.stats.wrong,
+      ty_le_dung: this.stats.total > 0 
+        ? `${Math.round((this.stats.correct / this.stats.total) * 100)}%` 
+        : '0%',
+      ty_le_sai: this.stats.total > 0 
+        ? `${Math.round((this.stats.wrong / this.stats.total) * 100)}%` 
+        : '0%',
+      recent_10: this.predictionLog.slice(-10).map(p => ({
+        phien: p.session,
+        du_doan: p.predicted === 'T' ? 'tài' : 'xỉu',
+        thuc_te: p.actual === 'T' ? 'tài' : 'xỉu',
+        ket_qua: p.correct ? 'đúng' : 'sai'
+      }))
+    };
   }
 }
 
@@ -206,22 +261,27 @@ const ai = new SmartAI();
 const app = fastify({ logger: false });
 await app.register(cors, { origin: "*" });
 
-// GET /api/taixiu/sunwin
-app.get("/api/taixiu/sunwin", async () => {
+// GET /sunwinsew - Endpoint chính
+app.get("/sunwinsew", async () => {
   try {
     const lastResult = results[0];
+    
     if (!lastResult) {
       return {
         id: "@minhsangdangcap",
-        status: "đang chờ dữ liệu",
+        status: "đang chờ dữ liệu từ websocket",
+        websocket_status: wsConnected ? "connected" : "disconnected",
+        reconnect_count: wsReconnectCount,
+        last_update: lastUpdateTime,
         phien: null,
         ket_qua: null,
         xuc_xac: null,
         tong: null,
         du_doan: null,
-        pattern: null,
-        loai_cau: null,
-        thong_ke: ai.stats
+        do_tin_cay: null,
+        pattern: "chưa có dữ liệu",
+        loai_cau: "chưa có dữ liệu",
+        thong_ke: ai.getDetailedStats()
       };
     }
 
@@ -230,51 +290,87 @@ app.get("/api/taixiu/sunwin", async () => {
 
     return {
       id: "@minhsangdangcap",
+      status: "online",
+      websocket_status: wsConnected ? "connected" : "disconnected",
+      last_update: lastUpdateTime,
       phien: lastResult.session,
       ket_qua: lastResult.result.toLowerCase(),
       xuc_xac: lastResult.dice,
       tong: lastResult.total,
       du_doan: prediction.prediction,
       do_tin_cay: `${prediction.confidence}%`,
+      ly_do: prediction.reason,
       pattern: ai.getPattern(),
       loai_cau: ai.detectBridgeType(),
-      thong_ke: {
-        tong_du_doan: ai.stats.total,
-        dung: ai.stats.correct,
-        sai: ai.stats.wrong,
-        ty_le_dung: ai.stats.total > 0 
-          ? `${Math.round((ai.stats.correct / ai.stats.total) * 100)}%` 
-          : '0%'
-      }
+      thong_ke: ai.getDetailedStats(),
+      history_count: results.length,
+      ai_history_count: ai.history.length
     };
   } catch (error) {
-    console.error('API Error:', error);
-    return { id: "@minhsangdangcap", error: "Lỗi hệ thống" };
+    console.error('❌ API Error:', error);
+    return { 
+      id: "@minhsangdangcap", 
+      status: "error",
+      error: error.message,
+      websocket_status: wsConnected ? "connected" : "disconnected"
+    };
   }
 });
 
 // GET /api/taixiu/history
 app.get("/api/taixiu/history", async () => {
-  return results.slice(0, 20).map(r => ({
-    phien: r.session,
-    xuc_xac: r.dice,
-    tong: r.total,
-    ket_qua: r.result.toLowerCase()
-  }));
+  return {
+    id: "@minhsangdangcap",
+    total: results.length,
+    results: results.slice(0, 50).map(r => ({
+      phien: r.session,
+      xuc_xac: r.dice,
+      tong: r.total,
+      ket_qua: r.result.toLowerCase(),
+      timestamp: r.timestamp
+    }))
+  };
+});
+
+// GET /api/stats
+app.get("/api/stats", async () => {
+  return {
+    id: "@minhsangdangcap",
+    websocket: {
+      connected: wsConnected,
+      reconnect_count: wsReconnectCount,
+      last_update: lastUpdateTime
+    },
+    data: {
+      total_results: results.length,
+      ai_history: ai.history.length,
+      oldest_session: results[results.length - 1]?.session,
+      newest_session: results[0]?.session
+    },
+    ai_stats: ai.getDetailedStats()
+  };
 });
 
 // GET /
 app.get("/", async () => ({
   id: "@minhsangdangcap",
-  name: "Tài Xỉu AI Tối Ưu",
-  version: "2.0",
-  status: "online"
+  name: "Sunwin Tài Xỉu API Nâng Cấp",
+  version: "3.0",
+  status: "online",
+  websocket: wsConnected ? "connected" : "disconnected",
+  endpoints: {
+    main: "/sunwinsew",
+    history: "/api/taixiu/history",
+    stats: "/api/stats"
+  }
 }));
 
 // --- SERVER START ---
 await app.listen({ port: PORT, host: "0.0.0.0" });
 console.log(`\n🚀 Server đang chạy tại http://localhost:${PORT}`);
-console.log(`📡 API: http://localhost:${PORT}/api/taixiu/sunwin\n`);
+console.log(`📡 API chính: http://localhost:${PORT}/sunwinsew`);
+console.log(`📊 Thống kê: http://localhost:${PORT}/api/stats`);
+console.log(`📚 Lịch sử: http://localhost:${PORT}/api/taixiu/history\n`);
 
 // --- WEBSOCKET ---
 function sendCmd() {
@@ -284,16 +380,22 @@ function sendCmd() {
 }
 
 function connect() {
-  console.log("🔌 Đang kết nối WebSocket...");
+  console.log(`🔌 [${new Date().toLocaleTimeString()}] Đang kết nối WebSocket... (lần ${wsReconnectCount + 1})`);
   
-  if (ws) ws.close();
+  if (ws) {
+    ws.removeAllListeners();
+    ws.close();
+  }
   clearInterval(intervalCmd);
+  wsConnected = false;
 
   ws = new WebSocket(`${WS_URL}${TOKEN}`);
 
   ws.on("open", () => {
-    console.log("✅ WebSocket connected");
+    wsConnected = true;
+    console.log(`✅ [${new Date().toLocaleTimeString()}] WebSocket connected thành công!`);
     
+    // Gửi auth
     ws.send(JSON.stringify([1, "MiniGame", "SC_giathinh2133", "thinh211", {
       info: JSON.stringify({
         ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
@@ -307,6 +409,7 @@ function connect() {
       subi: true,
     }]));
     
+    // Ping mỗi 5s
     intervalCmd = setInterval(sendCmd, 5000);
   });
 
@@ -316,50 +419,62 @@ function connect() {
         ? JSON.parse(data) 
         : JSON.parse(new TextDecoder().decode(data));
 
-      if (json.session && json.dice) {
+      // Kết quả mới
+      if (json.session && json.dice && Array.isArray(json.dice)) {
         const record = {
           session: json.session,
           dice: json.dice,
           total: json.total,
-          result: json.result
+          result: json.result,
+          timestamp: new Date().toISOString()
         };
         
         ai.addResult(record);
         results.unshift(record);
-        if (results.length > 50) results.pop();
+        if (results.length > 100) results = results.slice(0, 100);
+
+        lastUpdateTime = new Date().toISOString();
 
         const pred = ai.predict();
-        console.log(`\n📥 Phiên ${record.session}: ${record.result} (${record.total})`);
-        console.log(`🔮 Dự đoán: ${pred.prediction.toUpperCase()} (${pred.confidence}%)`);
-        console.log(`📊 Thống kê: ${ai.stats.correct}/${ai.stats.total} đúng`);
+        console.log(`\n📥 [${new Date().toLocaleTimeString()}] Phiên ${record.session}: ${record.result} (${record.total}) ${JSON.stringify(record.dice)}`);
+        console.log(`🔮 Dự đoán tiếp theo: ${pred.prediction.toUpperCase()} (${pred.confidence}%) - ${pred.reason}`);
+        console.log(`📊 Thống kê: ${ai.stats.correct}/${ai.stats.total} đúng (${ai.stats.total > 0 ? Math.round((ai.stats.correct/ai.stats.total)*100) : 0}%)`);
       }
-      else if (Array.isArray(json) && json[1]?.htr) {
+      // Lịch sử
+      else if (Array.isArray(json) && json[1]?.htr && Array.isArray(json[1].htr)) {
         const history = json[1].htr.map(i => ({
           session: i.sid,
           dice: [i.d1, i.d2, i.d3],
           total: i.d1 + i.d2 + i.d3,
-          result: (i.d1 + i.d2 + i.d3) >= 11 ? "Tài" : "Xỉu"
+          result: (i.d1 + i.d2 + i.d3) >= 11 ? "Tài" : "Xỉu",
+          timestamp: new Date().toISOString()
         })).sort((a, b) => a.session - b.session);
 
         ai.loadHistory(history);
-        results = history.slice(-50).reverse();
+        results = history.slice(-100).reverse();
+        lastUpdateTime = new Date().toISOString();
         
-        console.log(`📚 Đã tải ${history.length} kết quả lịch sử`);
+        console.log(`📚 [${new Date().toLocaleTimeString()}] Đã load ${history.length} kết quả lịch sử`);
+        console.log(`📊 Phiên cũ nhất: ${history[0].session}, Phiên mới nhất: ${history[history.length-1].session}`);
       }
     } catch (e) {
-      // Bỏ qua lỗi parse
+      // Bỏ qua các message không parse được
     }
   });
 
-  ws.on("close", () => {
-    console.log("🔌 WebSocket đã ngắt. Kết nối lại...");
+  ws.on("close", (code, reason) => {
+    wsConnected = false;
+    console.log(`🔌 [${new Date().toLocaleTimeString()}] WebSocket đã ngắt (code: ${code}). Kết nối lại sau 3s...`);
     clearInterval(intervalCmd);
+    wsReconnectCount++;
     setTimeout(connect, 3000);
   });
 
   ws.on("error", (err) => {
-    console.error("❌ WebSocket error:", err.message);
+    wsConnected = false;
+    console.error(`❌ [${new Date().toLocaleTimeString()}] WebSocket error:`, err.message);
   });
 }
 
+// Khởi động WebSocket
 connect();
