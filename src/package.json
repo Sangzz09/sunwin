@@ -1,16 +1,25 @@
 {
-  "name": "taixiu-ai",
-  "version": "2.0.0",
-  "type": "module",
+  "name": "sunwin-ai-bot",
+  "version": "1.0.0",
+  "description": "Bot du doan Tai Xiu Sunwin AI Optimized",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js"
   },
+  "keywords": [
+    "fastify",
+    "websocket",
+    "bot",
+    "ai"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "fastify": "^4.25.2",
-    "@fastify/cors": "^8.5.0",
-    "ws": "^8.16.0",
-    "node-fetch": "^3.3.2"
+    "fastify": "^4.26.2",
+    "@fastify/cors": "^9.0.1",
+    "ws": "^8.16.0"
   },
   "engines": {
     "node": ">=18.0.0"
