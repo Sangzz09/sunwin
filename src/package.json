@@ -1,23 +1,14 @@
 {
-  "name": "sunwin-ai-bot",
+  "name": "sunwin-ai-ultimate",
   "version": "1.0.0",
-  "description": "Bot du doan Tai Xiu Sunwin AI Optimized",
+  "description": "Bot AI Sunwin Full Algorithm",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js"
+    "start": "node index.js"
   },
-  "keywords": [
-    "fastify",
-    "websocket",
-    "bot",
-    "ai"
-  ],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "fastify": "^4.26.2",
+    "fastify": "^4.26.0",
     "@fastify/cors": "^9.0.1",
     "ws": "^8.16.0"
   },
