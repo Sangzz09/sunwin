@@ -5,8 +5,7 @@ import WebSocket from "ws";
 // --- CẤU HÌNH ---
 const PORT = process.env.PORT || 3000;
 const WS_URL = "wss://websocket.azhkthg1.net/websocket?token=";
-// Lưu ý: Token này thường có thời hạn, cần cập nhật nếu hết hạn
-const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJzYW5nZGVwemFpMDlubyIsImJvdCI6MCwiaXNNZXJjaGFudCI6ZmFsc2UsInZlcmlmaWVkQmFua0FjY291bnQiOnRydWUsInBsYXlFdmVudExvYmJ5IjpmYWxzZSwiY3VzdG9tZXJJZCI6MjIxNjQwNjcyLCJhZmZJZCI6IlN1bndpbiIsImJhbm5lZCI6ZmFsc2UsImJyYW5kIjoic3VuLndpbiIsInRpbWVzdGFtcCI6MTc2NTk3NDA2ODAyOSwibG9ja0dhbWVzIjpbXSwiYW1vdW50IjowLCJsb2NrQ2hhdCI6ZmFsc2UsInBob25lVmVyaWZpZWQiOnRydWUsImlwQWRkcmVzcyI6IjExMy4xNzQuNzguMjU1IiwibXV0ZSI6ZmFsc2UsImF2YXRhciI6Imh0dHBzOi8vaW1hZ2VzLnN3aW5zaG9wLm5ldC9pbWFnZXMvYXZhdGFyL2F2YXRhcl8xNS5wbmciLCJwbGF0Zm9ybUlkIjo0LCJ1c2VySWQiOiI3ODRmNGU0Mi1iZWExLTRiZTUtYjgwNS03MmJlZjY5N2UwMTIiLCJyZWdUaW1lIjoxNzQyMjMyMzQ1MTkxLCJwaG9uZSI6Ijg0ODg2MDI3NzY3IiwiZGVwb3NpdCI6dHJ1ZSwidXNlcm5hbWUiOiJTQ19tc2FuZ3p6MDkifQ._zZGSFa125sctwEL_R0u3wrRCC3QcRupDK4DFp1elDk";
+const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJzc2NoaWNobWVtIiwiYm90IjowLCJpc01lcmNoYW50IjpmYWxzZSwidmVyaWZpZWRCYW5rQWNjb3VudCI6ZmFsc2UsInBsYXlFdmVudExvYmJ5IjpmYWxzZSwiY3VzdG9tZXJJZCI6MzI2OTA1OTg1LCJhZmZJZCI6InN1bndpbiIsImJhbm5lZCI6ZmFsc2UsImJyYW5kIjoic3VuLndpbiIsInRpbWVzdGFtcCI6MTc2NTQ2OTYxNjg3MCwibG9ja0dhbWVzIjpbXSwiYW1vdW50IjowLCJsb2NrQ2hhdCI6ZmFsc2UsInBob25lVmVyaWZpZWQiOmZhbHNlLCJpcEFkZHJlc3MiOiIyNDAyOjgwMDo2ZjVmOmNiYzU6ODRjMTo2YzQzOjhmZGQ6NDdkYSIsIm11dGUiOmZhbHNlLCJhdmF0YXIiOiJodHRwczovL2ltYWdlcy5zd2luc2hvcC5uZXQvaW1hZ2VzL2F2YXRhci9hdmF0YXJfMTkucG5nIiwicGxhdGZvcm1JZCI6MiwidXNlcklkIjoiOWQyMTliNGYtMjQxYS00ZmU2LTkyNDItMDQ5MWYxYzRhMDVjIiwicmVnVGltZSI6MTc2MzcyNzkwNzk0MCwicGhvbmUiOiIiLCJkZXBvc2l0IjpmYWxzZSwidXNlcm5hbWUiOiJTQ19naWF0aGluaDIxMzMifQ.XGiELjKKAgIc-0dKYjZFOlDeH2e-LC_PvrvrzPcdY1U";
 
 // --- GLOBAL STATE ---
 let rikResults = [];
@@ -17,246 +16,310 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 // --- PATTERN DATABASE ---
-const BRIDGE_PATTERNS = {
-    'cau_1_1': { patterns: ['tx', 'xt'], name: 'Cầu 1-1' },
-    'cau_2_2': { patterns: ['ttxx', 'xxtt'], name: 'Cầu 2-2' },
-    'cau_3_3': { patterns: ['tttxxx', 'xxxttt'], name: 'Cầu 3-3' },
-    'cau_lung': { patterns: ['ttx', 'xxt', 'txx', 'xtt'], name: 'Cầu lửng' },
-    'cau_dai_4': { patterns: ['tttt', 'xxxx'], name: 'Cầu dài 4' },
-    'cau_dai_5': { patterns: ['ttttt', 'xxxxx'], name: 'Cầu dài 5+' },
-    'cau_dao': { patterns: ['tttxx', 'xxtt', 'ttxxx', 'xxttt'], name: 'Cầu đảo' },
-    'cau_zigzag': { patterns: ['txtx', 'xtxt', 'txtxt', 'xtxtx'], name: 'Cầu zigzag' },
-    'cau_1_2': { patterns: ['txx', 'xtt'], name: 'Cầu 1-2' },
-    'cau_2_1': { patterns: ['ttx', 'xxt'], name: 'Cầu 2-1' },
-    'cau_kep': { patterns: ['ttxxtt', 'xxttxx', 'txxttx', 'xtxxxt'], name: 'Cầu kép' },
+const PATTERN_DATABASE = {
+    'Cầu 1-1': ['tx', 'xt'], 
+    'Cầu Bệt': ['tt', 'xx'],
+    'Cầu 2-2': ['ttxx', 'xxtt'],
+    'Cầu 3-3': ['tttxxx', 'xxxttt'],
+    'Cầu 4-4': ['ttttxxxx', 'xxxxtttt'],
+    'Cầu 1-2-3': ['txxttt', 'xttxxx'],
+    'Cầu 3-2-1': ['tttxtx', 'xxxtxt'],
+    'Cầu Đảo': ['tttxx', 'xxxtt', 'ttx', 'xxt'],
+    'Cầu Lỗi 1-1': ['txtx', 'xtxt'],
+    'Sóng Âm': ['txx', 'xtt'],
+    'Sóng Dương': ['ttx', 'xxt'],
+    'Cầu Đối Xứng': ['ttxtt', 'xxtxx'],
+    'ZigZag': ['txt', 'xtx'],
+    'Fibonacci': ['tx', 'txx', 'txttx']
 };
 
-// --- UTILITIES ---
-function parseLines(lines) {
-    try {
-        const arr = lines.map(l => (typeof l === 'string' ? JSON.parse(l) : l));
-        return arr.map(item => ({
-            session: Number(item.session) || 0,
-            dice: Array.isArray(item.dice) ? item.dice : [],
-            total: Number(item.total) || 0,
-            result: item.result || '',
-            tx: (Number(item.total) || 0) >= 11 ? 'T' : 'X'
-        })).sort((a, b) => a.session - b.session);
-    } catch (e) {
-        console.error("Lỗi parseLines:", e.message);
-        return [];
-    }
+// --- HELPER FUNCTIONS ---
+function calculateVolatility(numbers) {
+    if (numbers.length === 0) return 0;
+    const mean = numbers.reduce((a, b) => a + b, 0) / numbers.length;
+    const variance = numbers.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / numbers.length;
+    return Math.sqrt(variance);
 }
 
-// --- THUẬT TOÁN AI ---
-function algo_advancedPattern(history) {
-    const tx = history.map(h => h.tx.toLowerCase());
+function calculateRSI(txArray) {
+    if (txArray.length < 14) return 50;
+    let gains = 0;
+    let losses = 0;
+    for (let i = 1; i < txArray.length; i++) {
+        if (txArray[i] === 'T' && txArray[i-1] === 'X') gains++;
+        else if (txArray[i] === 'X' && txArray[i-1] === 'T') losses++;
+    }
+    if (losses === 0) return 100;
+    const rs = gains / losses;
+    return 100 - (100 / (1 + rs));
+}
+
+function calculateEMA(numbers, period) {
+    const multiplier = 2 / (period + 1);
+    let ema = numbers[0];
+    for (let i = 1; i < numbers.length; i++) {
+        ema = numbers[i] * multiplier + ema * (1 - multiplier);
+    }
+    return ema;
+}
+
+function calculateMACD(totals) {
+    if (totals.length < 26) return 0;
+    const ema12 = calculateEMA(totals.slice(-12), 12);
+    const ema26 = calculateEMA(totals.slice(-26), 26);
+    return ema12 - ema26;
+}
+
+// --- CÁC THUẬT TOÁN AI ---
+
+// 1. Ultra Pattern Recognition
+function algo1_ultraPatternRecognition(history) {
+    const tx = history.map(h => h.tx);
     if (tx.length < 20) return null;
-    
-    const fullPattern = tx.join('');
-    let patternScores = { t: 0, x: 0 };
+    const txLower = tx.map(t => t.toLowerCase());
+    const fullPattern = txLower.join('');
+    let patternMatches = { t: 0, x: 0 };
     let totalWeight = 0;
-    
-    Object.entries(BRIDGE_PATTERNS).forEach(([key, bridgeData]) => {
-        bridgeData.patterns.forEach(pattern => {
-            const patternLen = pattern.length;
-            if (patternLen > 6) return;
-            
-            for (let i = 0; i <= fullPattern.length - patternLen - 1; i++) {
-                if (fullPattern.substr(i, patternLen) === pattern) {
-                    const nextChar = fullPattern.charAt(i + patternLen);
+    Object.values(PATTERN_DATABASE).forEach(patternList => {
+        patternList.forEach(pattern => {
+            const patternLength = pattern.length;
+            for (let i = 0; i <= fullPattern.length - patternLength - 1; i++) {
+                if (fullPattern.substr(i, patternLength) === pattern) {
+                    const nextChar = fullPattern.charAt(i + patternLength);
                     if (nextChar === 't' || nextChar === 'x') {
-                        const weight = patternLen / 4;
-                        patternScores[nextChar] += weight;
+                        const weight = (patternLength / 5);
+                        patternMatches[nextChar] += weight;
                         totalWeight += weight;
                     }
                 }
             }
         });
     });
-    
     if (totalWeight === 0) return null;
-    const tProb = patternScores.t / totalWeight;
-    const xProb = patternScores.x / totalWeight;
-    if (tProb >= 0.68) return 'T';
-    if (xProb >= 0.68) return 'X';
+    const tProb = patternMatches.t / totalWeight;
+    const xProb = patternMatches.x / totalWeight;
+    if (tProb >= 0.55) return 'T';
+    if (xProb >= 0.55) return 'X';
     return null;
 }
 
-function algo_smartBridge(history) {
+// 2. Quantum Adaptive AI
+function algo2_quantumAdaptiveAI(history) {
+    if (history.length < 30) return null;
+    const tx = history.map(h => h.tx);
+    const totals = history.map(h => h.total);
+    const state = { t: 0.5, x: 0.5 };
+    const recentCount = Math.min(20, history.length);
+    for (let i = history.length - recentCount; i < history.length; i++) {
+        const weight = 0.05;
+        if (tx[i] === 'T') { state.t *= (1 + weight); state.x *= (1 - weight); }
+        else { state.x *= (1 + weight); state.t *= (1 - weight); }
+    }
+    const recentAvg = totals.slice(-10).reduce((a, b) => a + b, 0) / 10;
+    if (recentAvg > 12) { state.t *= 0.9; state.x *= 1.1; }
+    else if (recentAvg < 8) { state.t *= 1.1; state.x *= 0.9; }
+    if (state.t > state.x) return 'T';
+    if (state.x > state.t) return 'X';
+    return null;
+}
+
+// 3. Deep Trend Analysis
+function algo3_deepTrendAnalysis(history) {
+    if (history.length < 20) return null;
+    const tx = history.map(h => h.tx);
+    const trends = { t: 0, x: 0 };
+    [5, 10, 15].forEach(period => {
+        const recent = tx.slice(-period);
+        const tCount = recent.filter(c => c === 'T').length;
+        const xCount = recent.filter(c => c === 'X').length;
+        if (tCount > xCount) trends.t++; else if (xCount > tCount) trends.x++;
+    });
+    if (trends.t > trends.x) return 'T';
+    if (trends.x > trends.t) return 'X';
+    return null;
+}
+
+// 4. Smart Bridge Detection
+function algo4_smartBridgeDetection(history) {
     const tx = history.map(h => h.tx);
     if (tx.length < 10) return null;
     const lastResult = tx[tx.length - 1];
-    let runLength = 1;
+    let run = 1;
     for (let i = tx.length - 2; i >= 0; i--) {
-        if (tx[i] === lastResult) runLength++;
-        else break;
+        if (tx[i] === lastResult) run++; else break;
     }
-    if (runLength >= 2 && runLength <= 4) return lastResult;
-    if (runLength >= 5) return lastResult === 'T' ? 'X' : 'T';
+    if (run >= 4) return lastResult;
     return null;
 }
 
-function algo_trendMomentum(history) {
-    if (history.length < 15) return null;
+// 5. Volatility Prediction
+function algo5_volatilityPrediction(history) {
+    if (history.length < 25) return null;
+    const totals = history.map(h => h.total);
+    const vol = calculateVolatility(totals.slice(-10));
+    if (vol < 2.0) {
+        const last = history[history.length - 1].tx;
+        return last === 'T' ? 'X' : 'T';
+    }
+    return null;
+}
+
+// 6. Pattern Fusion
+function algo6_patternFusionAI(history) {
+    const tx = history.map(h => h.tx).join('');
+    if (tx.endsWith('TXT')) return 'X';
+    if (tx.endsWith('XTX')) return 'T';
+    if (tx.endsWith('TTX')) return 'X';
+    if (tx.endsWith('XXT')) return 'T';
+    return null;
+}
+
+// 7. Real-time Indicators (RSI/MACD)
+function algo7_realtimeAdaptiveAI(history) {
+    if (history.length < 20) return null;
     const tx = history.map(h => h.tx);
     const totals = history.map(h => h.total);
-    const recent10 = tx.slice(-10);
-    const tCount = recent10.filter(t => t === 'T').length;
-    const xCount = recent10.filter(t => t === 'X').length;
-    const avgTotal = totals.slice(-10).reduce((a, b) => a + b, 0) / 10;
-    
-    let tScore = tCount;
-    let xScore = xCount;
-    if (avgTotal > 11.5) xScore += 2;
-    else if (avgTotal < 9.5) tScore += 2;
-    
-    if (tScore > xScore + 2) return 'T';
-    if (xScore > tScore + 2) return 'X';
-    return null;
-}
-
-function algo_volatility(history) {
-    if (history.length < 20) return null;
-    const totals = history.map(h => h.total);
-    const recent = totals.slice(-10);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recent.length;
-    const volatility = Math.sqrt(variance);
-    
-    if (volatility > 3.5) {
-        const avgRecent = mean;
-        if (avgRecent > 11.3) return 'X';
-        if (avgRecent < 9.7) return 'T';
-    }
-    if (volatility < 2.0) {
-        const recentTx = history.slice(-8).map(h => h.tx);
-        const tCount = recentTx.filter(t => t === 'T').length;
-        const xCount = recentTx.filter(t => t === 'X').length;
-        if (tCount > xCount + 2) return 'T';
-        if (xCount > tCount + 2) return 'X';
-    }
+    const rsi = calculateRSI(tx.slice(-14));
+    const macd = calculateMACD(totals);
+    let tScore = 0, xScore = 0;
+    if (rsi > 70) xScore += 1.5; else if (rsi < 30) tScore += 1.5;
+    if (macd > 0.5) tScore += 1; else if (macd < -0.5) xScore += 1;
+    if (tScore > xScore + 1.0) return 'T';
+    if (xScore > tScore + 1.0) return 'X';
     return null;
 }
 
 const ALGORITHMS = [
-    { id: 'advanced_pattern', fn: algo_advancedPattern, name: 'Advanced Pattern AI' },
-    { id: 'smart_bridge', fn: algo_smartBridge, name: 'Smart Bridge AI' },
-    { id: 'trend_momentum', fn: algo_trendMomentum, name: 'Trend Momentum AI' },
-    { id: 'volatility', fn: algo_volatility, name: 'Volatility Adaptive AI' },
+    { id: 'ultra_pattern', fn: algo1_ultraPatternRecognition, name: 'Ultra Pattern AI' },
+    { id: 'quantum_ai', fn: algo2_quantumAdaptiveAI, name: 'Quantum Adaptive AI' },
+    { id: 'deep_trend', fn: algo3_deepTrendAnalysis, name: 'Deep Trend AI' },
+    { id: 'smart_bridge', fn: algo4_smartBridgeDetection, name: 'Smart Bridge AI' },
+    { id: 'volatility', fn: algo5_volatilityPrediction, name: 'Volatility AI' },
+    { id: 'pattern_fusion', fn: algo6_patternFusionAI, name: 'Pattern Fusion AI' },
+    { id: 'realtime_ai', fn: algo7_realtimeAdaptiveAI, name: 'Real-time AI' },
 ];
 
 // --- AI CORE CLASS ---
-class OptimizedAI {
+class AdvancedDeepLearningAI {
     constructor() {
         this.history = [];
         this.algorithmWeights = {};
         this.algorithmPerformance = {};
-        this.recentPredictions = {};
+        this.lastPredictions = {}; 
         
+        // Stats Variables
+        this.globalStats = {
+            total: 0,
+            correct: 0,
+            wrong: 0
+        };
+        this.nextSessionPrediction = null; // Lưu dự đoán cho phiên tiếp theo để đối chiếu
+
         ALGORITHMS.forEach(algo => {
             this.algorithmWeights[algo.id] = 1.0;
-            this.algorithmPerformance[algo.id] = {
-                correct: 0, total: 0, recent: [], streak: 0, name: algo.name
-            };
-            this.recentPredictions[algo.id] = null;
+            this.algorithmPerformance[algo.id] = { correct: 0, total: 0, streak: 0, name: algo.name };
         });
     }
-    
+
+    // Logic phát hiện tên loại cầu
+    detectBridgeType() {
+        if (this.history.length < 5) return "Đang phân tích...";
+        
+        const tx = this.history.map(h => h.tx.toLowerCase());
+        const fullStr = tx.join('');
+        const recentStr = tx.slice(-8).join(''); // Lấy 8 phiên gần nhất
+
+        // 1. Check Bệt thủ công (vì bệt có thể dài vô tận)
+        const last = tx[tx.length - 1];
+        let run = 1;
+        for (let i = tx.length - 2; i >= 0; i--) {
+            if (tx[i] === last) run++; else break;
+        }
+        if (run >= 4) return `Bệt ${last === 't' ? 'Tài' : 'Xỉu'} (${run})`;
+
+        // 2. Check Database
+        for (const [name, patterns] of Object.entries(PATTERN_DATABASE)) {
+            for (const pattern of patterns) {
+                if (recentStr.endsWith(pattern)) {
+                    return name;
+                }
+            }
+        }
+
+        // 3. Mặc định
+        return "Cầu Tự Do";
+    }
+
     updateAlgorithmPerformance(actualTx) {
         ALGORITHMS.forEach(algo => {
             const perf = this.algorithmPerformance[algo.id];
-            const lastPred = this.recentPredictions[algo.id];
+            const lastPred = this.lastPredictions[algo.id];
             if (lastPred) {
                 const correct = lastPred === actualTx;
-                perf.correct += correct ? 1 : 0;
-                perf.total += 1;
-                perf.streak = correct ? perf.streak + 1 : 0;
-                perf.recent.push(correct ? 1 : 0);
-                if (perf.recent.length > 10) perf.recent.shift();
-                
-                if (perf.total >= 10) {
-                    const accuracy = perf.correct / perf.total;
-                    const recentAccuracy = perf.recent.reduce((a, b) => a + b) / perf.recent.length;
-                    const streakBonus = Math.min(perf.streak * 0.05, 0.2);
-                    let newWeight = (accuracy * 0.5 + recentAccuracy * 0.3 + streakBonus * 0.2);
-                    newWeight = Math.max(0.2, Math.min(2.0, newWeight * 2));
-                    this.algorithmWeights[algo.id] = this.algorithmWeights[algo.id] * 0.7 + newWeight * 0.3;
+                perf.total++;
+                if (correct) {
+                    perf.correct++;
+                    perf.streak++;
+                    this.algorithmWeights[algo.id] += Math.min(perf.streak * 0.05, 0.5);
+                } else {
+                    perf.streak = 0;
+                    this.algorithmWeights[algo.id] = Math.max(0.1, this.algorithmWeights[algo.id] - 0.1);
                 }
+                this.algorithmWeights[algo.id] = Math.min(3.0, this.algorithmWeights[algo.id]);
             }
         });
-        ALGORITHMS.forEach(algo => { this.recentPredictions[algo.id] = null; });
+        this.lastPredictions = {};
     }
-    
-    detectBridgeType(tx) {
-        const recentPattern = tx.slice(-8).join('').toLowerCase();
-        for (const [key, bridgeData] of Object.entries(BRIDGE_PATTERNS)) {
-            for (const pattern of bridgeData.patterns) {
-                if (recentPattern.includes(pattern)) return bridgeData.name;
-            }
-        }
-        const lastResult = tx[tx.length - 1].toLowerCase();
-        let runLength = 1;
-        for (let i = tx.length - 2; i >= 0; i--) {
-            if (tx[i].toLowerCase() === lastResult) runLength++;
-            else break;
-        }
-        if (runLength >= 5) return `Cầu dài ${runLength}`;
-        if (runLength >= 2) return `Cầu ${runLength}`;
-        return 'Cầu lửng';
-    }
-    
+
     predict() {
         if (this.history.length < 10) {
-            return {
-                prediction: 'tài', confidence: 0.5, rawPrediction: 'T',
-                algorithms: 0, bridgeType: 'đang phân tích'
-            };
+            return { prediction: 'tài', confidence: 0.5, rawPrediction: 'T', algorithms: 0, bridgeType: 'Loading...' };
         }
-        
+
         const predictions = [];
-        this.recentPredictions = {};
-        
+        this.lastPredictions = {};
+
         ALGORITHMS.forEach(algo => {
             try {
                 const pred = algo.fn(this.history);
                 if (pred === 'T' || pred === 'X') {
-                    const weight = this.algorithmWeights[algo.id] || 1.0;
+                    const weight = this.algorithmWeights[algo.id];
                     predictions.push({ algorithm: algo.id, prediction: pred, weight: weight });
-                    this.recentPredictions[algo.id] = pred;
+                    this.lastPredictions[algo.id] = pred;
                 }
-            } catch (e) { console.error(`Lỗi ${algo.id}:`, e.message); }
+            } catch (e) {}
         });
-        
-        const tx = this.history.map(h => h.tx);
-        const bridgeType = this.detectBridgeType(tx);
+
+        const bridgeType = this.detectBridgeType();
 
         if (predictions.length === 0) {
-            return {
-                prediction: 'tài', confidence: 0.5, rawPrediction: 'T',
-                algorithms: 0, bridgeType: bridgeType
-            };
+            // Lưu dự đoán mặc định
+            this.nextSessionPrediction = { session: this.history[this.history.length-1].session + 1, pick: 'T' };
+            return { prediction: 'tài', confidence: 0.5, rawPrediction: 'T', algorithms: 0, bridgeType: bridgeType };
         }
-        
+
         const votes = { T: 0, X: 0 };
         predictions.forEach(p => { votes[p.prediction] += p.weight; });
-        
-        const tVotes = votes['T'] || 0;
-        const xVotes = votes['X'] || 0;
-        let finalPrediction = tVotes > xVotes ? 'T' : 'X';
-        const totalWeight = tVotes + xVotes;
-        const winningVotes = Math.max(tVotes, xVotes);
-        const confidence = Math.min(0.95, (winningVotes / totalWeight) * 1.1);
-        
+
+        const finalPrediction = votes['T'] >= votes['X'] ? 'T' : 'X';
+        const totalWeight = votes['T'] + votes['X'];
+        const confidence = totalWeight > 0 ? Math.max(votes['T'], votes['X']) / totalWeight : 0.5;
+
+        // Lưu dự đoán cho phiên sau để tính thống kê
+        this.nextSessionPrediction = {
+            session: this.history[this.history.length - 1].session + 1,
+            pick: finalPrediction
+        };
+
         return {
             prediction: finalPrediction === 'T' ? 'tài' : 'xỉu',
-            confidence: confidence,
+            confidence: Math.min(0.99, confidence),
             rawPrediction: finalPrediction,
             algorithms: predictions.length,
             bridgeType: bridgeType
         };
     }
-    
+
     addResult(record) {
         const parsed = {
             session: Number(record.session) || 0,
@@ -265,66 +328,59 @@ class OptimizedAI {
             result: record.result || '',
             tx: (Number(record.total) || 0) >= 11 ? 'T' : 'X'
         };
-        
-        if (this.history.length >= 10) {
-            this.updateAlgorithmPerformance(parsed.tx);
+
+        // --- CẬP NHẬT THỐNG KÊ (STATS) ---
+        // Kiểm tra xem phiên vừa về (parsed.session) có phải là phiên mình đã dự đoán không
+        if (this.nextSessionPrediction && this.nextSessionPrediction.session === parsed.session) {
+            this.globalStats.total++;
+            if (this.nextSessionPrediction.pick === parsed.tx) {
+                this.globalStats.correct++;
+            } else {
+                this.globalStats.wrong++;
+            }
         }
-        
+
+        if (this.history.length >= 15) this.updateAlgorithmPerformance(parsed.tx);
         this.history.push(parsed);
         if (this.history.length > 300) this.history = this.history.slice(-200);
         return parsed;
     }
-    
-    loadHistory(historyData) {
-        // historyData phải được sort session thấp -> cao
-        this.history = historyData;
-        
-        if (this.history.length >= 20) {
-            console.log(`🤖 Huấn luyện AI trên ${this.history.length} mẫu...`);
-            // Logic huấn luyện lại trọng số dựa trên lịch sử
-            // (Giữ nguyên logic huấn luyện trong code gốc của bạn nếu cần)
-            console.log('✅ Huấn luyện hoàn tất!');
-        }
-    }
 
+    // Helper lấy thống kê định dạng đẹp
+    getStatsFormatted() {
+        const total = this.globalStats.total;
+        const correct = this.globalStats.correct;
+        const wrong = this.globalStats.wrong;
+        const rate = total > 0 ? ((correct / total) * 100).toFixed(1) : 0;
+        
+        return {
+            thang: correct,
+            thua: wrong,
+            tong: total,
+            ti_le: `${rate}%`
+        };
+    }
+    
+    loadHistory(historyData) { 
+        this.history = historyData; 
+        // Reset stats khi load lại history để tránh cộng dồn sai
+        // this.globalStats = { total: 0, correct: 0, wrong: 0 };
+    }
+    
     getPattern() {
-        if (this.history.length < 20) return 'đang thu thập...';
+        if (this.history.length < 20) return "đang thu thập...";
         const tx = this.history.map(h => h.tx);
         return tx.slice(-15).join('').toLowerCase();
     }
-    
-    getStats() {
-        const stats = {};
-        ALGORITHMS.forEach(algo => {
-            const perf = this.algorithmPerformance[algo.id];
-            if (perf.total > 0) {
-                stats[algo.id] = {
-                    name: perf.name,
-                    accuracy: ((perf.correct / perf.total) * 100).toFixed(1) + '%',
-                    weight: this.algorithmWeights[algo.id].toFixed(2),
-                    predictions: perf.total,
-                    streak: perf.streak
-                };
-            }
-        });
-        return stats;
-    }
 }
 
-const ai = new OptimizedAI();
+const ai = new AdvancedDeepLearningAI();
 
 // --- API SERVER ---
 const app = fastify({ logger: false });
 app.register(cors, { origin: "*" });
 
-// Health check
-app.get("/health", async () => ({ 
-    status: "ok", 
-    timestamp: new Date().toISOString(),
-    websocket: rikWS?.readyState === WebSocket.OPEN ? "connected" : "disconnected"
-}));
-
-// API CHÍNH
+// API CHÍNH (Đầy đủ Stats và Loại Cầu)
 app.get("/sunwinsew", async (request, reply) => {
     try {
         const valid = rikResults.filter((r) => r.dice?.length === 3);
@@ -333,14 +389,14 @@ app.get("/sunwinsew", async (request, reply) => {
         if (!lastResult) {
             return {
                 id: "@minhsangdangcap",
-                phien_hien_tai: null, ket_qua: null, xuc_xac: null,
-                phien_du_doan: null, du_doan: "đang chờ dữ liệu...",
-                pattern: "đang thu thập...", loai_cau: "đang phân tích", do_tin_cay: "50%"
+                status: "waiting",
+                du_doan: "đang chờ dữ liệu..."
             };
         }
         
         const currentPrediction = ai.predict();
         const pattern = ai.getPattern();
+        const stats = ai.getStatsFormatted(); // Lấy thống kê
         
         return {
             id: "@minhsangdangcap",
@@ -350,11 +406,12 @@ app.get("/sunwinsew", async (request, reply) => {
             phien_du_doan: lastResult.session + 1,
             du_doan: currentPrediction.prediction,
             pattern: pattern,
-            loai_cau: currentPrediction.bridgeType,
-            do_tin_cay: `${(currentPrediction.confidence * 100).toFixed(1)}%`
+            loai_cau: currentPrediction.bridgeType, // <-- Đã thêm loại cầu
+            do_tin_cay: `${(currentPrediction.confidence * 100).toFixed(1)}%`,
+            thong_ke: stats // <-- Đã thêm thống kê
         };
     } catch (error) {
-        return { id: "@minhsangdangcap", error: "Hệ thống đang xử lý" };
+        return { error: "Hệ thống đang xử lý" };
     }
 });
 
@@ -363,11 +420,12 @@ app.get("/api/taixiu/sunwin", async (request, reply) => {
     try {
         const valid = rikResults.filter((r) => r.dice?.length === 3);
         const lastResult = valid.length ? valid[0] : null;
+        if (!lastResult) return { status: "loading" };
+
         const currentPrediction = ai.predict();
         const pattern = ai.getPattern();
-        
-        if (!lastResult) return { status: "loading" };
-        
+        const stats = ai.getStatsFormatted();
+
         return {
             id: "@minhsangdangcap",
             phien_truoc: lastResult.session,
@@ -375,10 +433,11 @@ app.get("/api/taixiu/sunwin", async (request, reply) => {
             tong: lastResult.total,
             ket_qua: lastResult.result.toLowerCase(),
             pattern: pattern,
-            loai_cau: currentPrediction.bridgeType,
             phien_hien_tai: lastResult.session + 1,
             du_doan: currentPrediction.prediction,
+            loai_cau: currentPrediction.bridgeType,
             do_tin_cay: `${(currentPrediction.confidence * 100).toFixed(1)}%`,
+            thong_ke: stats
         };
     } catch (error) { return { error: "Lỗi hệ thống" }; }
 });
@@ -388,8 +447,6 @@ app.get("/api/taixiu/history", async () => {
         session: i.session, dice: i.dice, total: i.total, result: i.result, tx: i.total >= 11 ? 'T' : 'X'
     }));
 });
-
-app.get("/api/taixiu/ai-stats", async () => ({ stats: ai.getStats() }));
 
 // --- WEBSOCKET HANDLER ---
 function decodeBinaryMessage(data) {
@@ -418,7 +475,15 @@ function connectRikWebSocket() {
     if (rikWS) rikWS.close();
     clearInterval(rikIntervalCmd);
     
-    try { rikWS = new WebSocket(`${WS_URL}${TOKEN}`); } 
+    const options = {
+        headers: {
+            "Origin": "https://web.sunwin.win", 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Host": "websocket.azhkthg1.net" 
+        }
+    };
+
+    try { rikWS = new WebSocket(`${WS_URL}${TOKEN}`, options); } 
     catch (e) {
         reconnectAttempts++;
         setTimeout(connectRikWebSocket, 5000);
@@ -428,7 +493,6 @@ function connectRikWebSocket() {
     rikWS.on("open", () => {
         console.log("✅ WebSocket Connected");
         reconnectAttempts = 0;
-        // Gửi auth payload
         rikWS.send(JSON.stringify([1, "MiniGame", "SC_giathinh2133", "thinh211", {
             info: JSON.stringify({
                 ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
@@ -448,72 +512,49 @@ function connectRikWebSocket() {
             const json = typeof data === "string" ? JSON.parse(data) : decodeBinaryMessage(data);
             if (!json) return;
             
-            // 1. XỬ LÝ PHIÊN MỚI (LIVE)
             if (json.session && Array.isArray(json.dice)) {
                 const record = {
-                    session: json.session,
-                    dice: json.dice,
-                    total: json.total,
+                    session: json.session, dice: json.dice, total: json.total,
                     result: json.result || (json.total >= 11 ? 'Tai' : 'Xiu'),
                 };
-                
                 const parsed = ai.addResult(record);
-                
                 if (!rikCurrentSession || record.session > rikCurrentSession) {
                     rikCurrentSession = record.session;
                     rikResults.unshift(record);
                     if (rikResults.length > 100) rikResults.pop();
                 }
-                
                 const prediction = ai.predict();
-                console.log(`\n📥 PHIÊN ${parsed.session}: ${parsed.result} (${parsed.total})`);
-                console.log(`🔮 DỰ ĐOÁN ${parsed.session + 1}: ${prediction.prediction.toUpperCase()}`);
+                const stats = ai.getStatsFormatted();
+                console.log(`\n📥 PHIÊN ${parsed.session}: ${parsed.result} -> DỰ ĐOÁN SAU: ${prediction.prediction.toUpperCase()} | ${prediction.bridgeType}`);
+                console.log(`📊 STATS: ${stats.thang}/${stats.tong} (${stats.ti_le})`);
             } 
-            // 2. XỬ LÝ LỊCH SỬ (HISTORY) - PHẦN BỊ THIẾU Ở CODE CŨ
             else if (Array.isArray(json) && json[1]?.htr) {
                 const historyData = json[1].htr.map(i => ({
-                    session: i.sid,
-                    dice: [i.d1, i.d2, i.d3],
-                    total: i.d1 + i.d2 + i.d3,
+                    session: i.sid, dice: [i.d1, i.d2, i.d3], total: i.d1 + i.d2 + i.d3,
                     result: (i.d1 + i.d2 + i.d3) >= 11 ? 'Tai' : 'Xiu',
                     tx: (i.d1 + i.d2 + i.d3) >= 11 ? 'T' : 'X'
                 })).sort((a, b) => a.session - b.session);
-
-                // Nạp vào AI để học
                 ai.loadHistory(historyData);
-                
-                // Nạp vào biến global để hiển thị API (đảo ngược lại để mới nhất lên đầu)
                 rikResults = [...historyData].reverse();
                 if(rikResults.length > 0) rikCurrentSession = rikResults[0].session;
-                
-                console.log(`✅ Đã tải và đồng bộ ${historyData.length} phiên lịch sử.`);
+                console.log(`✅ Đã đồng bộ ${historyData.length} phiên lịch sử.`);
             }
-        } catch (e) {
-            console.error("Lỗi xử lý message:", e);
-        }
+        } catch (e) { console.error("Lỗi socket:", e.message); }
     });
 
     rikWS.on("close", () => {
         console.log("⚠️ WebSocket closed. Reconnecting...");
         setTimeout(connectRikWebSocket, 3000);
     });
-
-    rikWS.on("error", (err) => {
-        console.error("⚠️ WebSocket Error:", err.message);
-    });
 }
 
-// --- KHỞI ĐỘNG SERVER ---
+// --- START SERVER ---
 const start = async () => {
     try {
         await app.listen({ port: PORT, host: '0.0.0.0' });
-        console.log(`🚀 Server đang chạy tại http://localhost:${PORT}`);
-        // Bắt đầu kết nối WS sau khi server chạy
+        console.log(`🚀 Server running at http://localhost:${PORT}`);
         connectRikWebSocket();
-    } catch (err) {
-        app.log.error(err);
-        process.exit(1);
-    }
+    } catch (err) { app.log.error(err); process.exit(1); }
 };
 
 start();
