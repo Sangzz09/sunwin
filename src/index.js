@@ -97,21 +97,6 @@ const calculateBollingerBands = (txArray, period = 20) => {
     };
 };
 
-// Entropy - Đo độ ngẫu nhiên
-const calculateEntropy = (txArray) => {
-    if (txArray.length < 10) return 1;
-    
-    const tCount = txArray.filter(tx => tx === 'T').length;
-    const xCount = txArray.length - tCount;
-    
-    const pT = tCount / txArray.length;
-    const pX = xCount / txArray.length;
-    
-    if (pT === 0 || pX === 0) return 0;
-    
-    return -(pT * Math.log2(pT) + pX * Math.log2(pX));
-};
-
 // --- THUẬT TOÁN DỰ ĐOÁN NÂNG CAO ---
 
 // 1. Markov Chain với Memory đa cấp
@@ -121,7 +106,6 @@ function algo_MarkovChainAdvanced(history) {
     const tx = history.map(h => h.tx);
     const results = [];
     
-    // Kiểm tra pattern 1 bước, 2 bước, 3 bước
     for (let depth = 1; depth <= 3; depth++) {
         const pattern = tx.slice(-depth).join('');
         let tNext = 0, xNext = 0;
@@ -146,7 +130,6 @@ function algo_MarkovChainAdvanced(history) {
     
     if (results.length === 0) return null;
     
-    // Weighted voting
     let tScore = 0, xScore = 0;
     results.forEach(r => {
         const score = r.confidence * r.weight;
@@ -285,9 +268,9 @@ class MasterAI {
     constructor() {
         this.history = [];
         this.liveStats = { total: 0, correct: 0, wrong: 0 };
-        this.lastPrediction = null;
-        this.apiStartTime = null; // Thời điểm bắt đầu treo API
-        this.trackingStarted = false; // Đã bắt đầu tracking chưa
+        this.activePrediction = null; // Dự đoán đang chờ kết quả
+        this.isApiActive = false; // API đã được gọi chưa
+        this.trackingStartSession = null; // Phiên bắt đầu tracking
         
         this.algoWeights = {
             markov: 2.0,
@@ -310,36 +293,43 @@ class MasterAI {
             this.history = this.history.slice(-200);
         }
         
-        console.log(`✅ Đã load ${sortedData.length} phiên lịch sử.`);
+        console.log(`✅ Đã load ${sortedData.length} phiên lịch sử (chỉ để AI học).`);
     }
 
-    // Bắt đầu tracking từ lần gọi API đầu tiên
-    startTracking() {
-        if (!this.trackingStarted) {
-            this.trackingStarted = true;
-            this.apiStartTime = Date.now();
-            console.log(`📊 Bắt đầu tracking thống kê từ ${new Date().toLocaleString()}`);
+    // Kích hoạt API - bắt đầu tracking từ đây
+    activateAPI() {
+        if (!this.isApiActive) {
+            this.isApiActive = true;
+            if (this.history.length > 0) {
+                this.trackingStartSession = this.history[this.history.length - 1].session + 1;
+            }
+            console.log(`🟢 API ĐƯỢC TREO - Bắt đầu tracking từ phiên ${this.trackingStartSession}`);
         }
     }
 
     addResult(record) {
+        // Kiểm tra trùng lặp
         if (this.history.find(h => h.session === record.session)) return;
 
-        // Kiểm tra kết quả dự đoán trước đó (chỉ khi đã tracking)
-        if (this.trackingStarted && this.lastPrediction && 
-            this.lastPrediction.session === record.session) {
+        // CHỈ TÍNH THỐNG KÊ KHI API ĐÃ ACTIVE VÀ CÓ DỰ ĐOÁN ĐANG CHỜ
+        if (this.isApiActive && this.activePrediction && 
+            this.activePrediction.session === record.session) {
             
             this.liveStats.total++;
             
-            if (this.lastPrediction.pick === record.tx) {
+            if (this.activePrediction.pick === record.tx) {
                 this.liveStats.correct++;
-                console.log(`✅ ĐÚNG: Phiên ${record.session} - Dự đoán ${this.lastPrediction.pick} = Kết quả ${record.tx}`);
+                console.log(`✅ ĐÚNG #${this.liveStats.total}: Phiên ${record.session} - Dự đoán ${this.activePrediction.pick} = ${record.tx} | Tỷ lệ: ${this.getRate()}`);
             } else {
                 this.liveStats.wrong++;
-                console.log(`❌ SAI: Phiên ${record.session} - Dự đoán ${this.lastPrediction.pick} ≠ Kết quả ${record.tx}`);
+                console.log(`❌ SAI #${this.liveStats.total}: Phiên ${record.session} - Dự đoán ${this.activePrediction.pick} ≠ ${record.tx} | Tỷ lệ: ${this.getRate()}`);
             }
+            
+            // Reset dự đoán đã xử lý
+            this.activePrediction = null;
         }
 
+        // Thêm vào lịch sử để AI học
         this.history.push(record);
         if (this.history.length > 200) this.history = this.history.slice(-200);
     }
@@ -357,39 +347,25 @@ class MasterAI {
         const votes = { T: 0, X: 0 };
         
         const markov = algo_MarkovChainAdvanced(this.history);
-        if (markov) {
-            votes[markov.pick] += this.algoWeights.markov * markov.confidence;
-        }
+        if (markov) votes[markov.pick] += this.algoWeights.markov * markov.confidence;
 
         const pattern = algo_PatternRecognition(this.history);
-        if (pattern) {
-            votes[pattern.pick] += this.algoWeights.pattern * pattern.confidence;
-        }
+        if (pattern) votes[pattern.pick] += this.algoWeights.pattern * pattern.confidence;
 
         const momentum = algo_Momentum(this.history);
-        if (momentum) {
-            votes[momentum.pick] += this.algoWeights.momentum * momentum.confidence;
-        }
+        if (momentum) votes[momentum.pick] += this.algoWeights.momentum * momentum.confidence;
 
         const meanRev = algo_MeanReversion(this.history);
-        if (meanRev) {
-            votes[meanRev.pick] += this.algoWeights.meanReversion * meanRev.confidence;
-        }
+        if (meanRev) votes[meanRev.pick] += this.algoWeights.meanReversion * meanRev.confidence;
 
         const streak = algo_StreakBreaker(this.history);
-        if (streak) {
-            votes[streak.pick] += this.algoWeights.streakBreaker * streak.confidence;
-        }
+        if (streak) votes[streak.pick] += this.algoWeights.streakBreaker * streak.confidence;
 
         const freq = algo_FrequencyAnalysis(this.history);
-        if (freq) {
-            votes[freq.pick] += this.algoWeights.frequency * freq.confidence;
-        }
+        if (freq) votes[freq.pick] += this.algoWeights.frequency * freq.confidence;
 
         const macd = algo_MACDStrategy(this.history);
-        if (macd) {
-            votes[macd.pick] += this.algoWeights.macd * macd.confidence;
-        }
+        if (macd) votes[macd.pick] += this.algoWeights.macd * macd.confidence;
 
         let finalPick = null;
         const totalVotes = votes.T + votes.X;
@@ -401,15 +377,18 @@ class MasterAI {
             finalPick = votes.T > votes.X ? 'T' : 'X';
         }
 
-        // Tạo pattern string từ 10 phiên gần nhất
         const patternStr = this.history.slice(-10).map(h => h.tx).join('');
         const bridgeType = this.detectBridgeType();
         const nextSession = this.history[this.history.length - 1].session + 1;
 
-        this.lastPrediction = {
-            session: nextSession,
-            pick: finalPick
-        };
+        // LƯU DỰ ĐOÁN ĐANG CHỜ - CHỈ KHI API ACTIVE
+        if (this.isApiActive) {
+            this.activePrediction = {
+                session: nextSession,
+                pick: finalPick
+            };
+            console.log(`🎯 Dự đoán phiên ${nextSession}: ${finalPick === 'T' ? 'TÀI' : 'XỈU'}`);
+        }
 
         return {
             prediction: finalPick === 'T' ? 'Tài' : 'Xỉu',
@@ -435,6 +414,12 @@ class MasterAI {
         if (this.liveStats.total === 0) return "0%";
         return ((this.liveStats.correct / this.liveStats.total) * 100).toFixed(1) + "%";
     }
+
+    getStatus() {
+        if (!this.isApiActive) return "Chưa kích hoạt";
+        if (this.liveStats.total === 0) return "Đang chờ kết quả đầu tiên";
+        return "Đang hoạt động";
+    }
 }
 
 const ai = new MasterAI();
@@ -451,10 +436,10 @@ app.get("/sunwinsew", async (request, reply) => {
         };
     }
 
-    // Bắt đầu tracking từ lần gọi API đầu tiên
-    ai.startTracking();
+    // KÍCH HOẠT API - BẮT ĐẦU TRACKING TỪ ĐÂY
+    ai.activateAPI();
 
-    const lastRes = rikResults[0]; // Phiên vừa kết thúc (phiên trước)
+    const lastRes = rikResults[0]; // Phiên vừa kết thúc
     const prediction = ai.predict();
 
     return {
@@ -468,6 +453,7 @@ app.get("/sunwinsew", async (request, reply) => {
         pattern: prediction.pattern,
         loai_cau: prediction.bridgeType,
         thong_ke: {
+            status: ai.getStatus(),
             so_lan_du_doan: ai.liveStats.total,
             so_dung: ai.liveStats.correct,
             so_sai: ai.liveStats.wrong,
@@ -481,7 +467,8 @@ app.get("/health", async (request, reply) => {
         status: "OK",
         uptime: process.uptime(),
         websocket: rikWS?.readyState === WebSocket.OPEN ? "Connected" : "Disconnected",
-        tracking_active: ai.trackingStarted,
+        api_active: ai.isApiActive,
+        tracking_start: ai.trackingStartSession,
         predictions_made: ai.liveStats.total
     };
 });
@@ -558,9 +545,9 @@ function connectWebSocket() {
         }
         if (!json) return;
 
-        // Load lịch sử
+        // Load lịch sử (CHỈ ĐỂ AI HỌC - KHÔNG TÍNH THỐNG KÊ)
         if (Array.isArray(json) && json[1] && json[1].htr) {
-            console.log("📥 Đang tải lịch sử...");
+            console.log("📥 Đang tải lịch sử để AI học...");
             const historyData = json[1].htr.map(i => ({
                 session: i.sid,
                 dice: [i.d1, i.d2, i.d3],
@@ -572,10 +559,10 @@ function connectWebSocket() {
             ai.loadHistory(historyData);
             rikResults = [...historyData].reverse();
             
-            console.log(`🎯 Sẵn sàng dự đoán!`);
+            console.log(`🎯 Lịch sử đã load. Chờ API được treo để bắt đầu dự đoán.`);
         }
 
-        // Kết quả mới
+        // Kết quả mới (CHỈ TÍNH THỐNG KÊ SAU KHI API ACTIVE)
         else if (Array.isArray(json) && json[1] && json[1].sid && json[1].d1) {
             const newRecord = {
                 session: json[1].sid,
@@ -585,13 +572,13 @@ function connectWebSocket() {
                 tx: (json[1].d1 + json[1].d2 + json[1].d3) >= 11 ? 'T' : 'X'
             };
             
+            console.log(`🎲 Phiên ${newRecord.session}: ${newRecord.result} [${newRecord.dice.join('-')}] Tổng: ${newRecord.total}`);
+            
+            // Thêm kết quả - hàm này sẽ tự động kiểm tra có cần tính thống kê không
             ai.addResult(newRecord);
+            
             rikResults.unshift(newRecord);
             if (rikResults.length > 100) rikResults = rikResults.slice(0, 100);
-            
-            const nextPred = ai.predict();
-            console.log(`🎲 Phiên ${newRecord.session}: ${newRecord.result} [${newRecord.dice.join('-')}]`);
-            console.log(`📊 Dự đoán phiên ${newRecord.session + 1}: ${nextPred.prediction} - Stats: ${ai.getRate()}`);
         }
     });
 
@@ -616,5 +603,6 @@ app.listen({ port: PORT, host: "0.0.0.0" }, (err, address) => {
     }
     console.log(`🚀 Server running at ${address}`);
     console.log(`📡 API endpoint: ${address}/sunwinsew`);
+    console.log(`⚠️ Thống kê CHỈ bắt đầu khi API được gọi lần đầu tiên!`);
     connectWebSocket();
 });
