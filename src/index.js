@@ -3,390 +3,731 @@ import cors from "@fastify/cors";
 import WebSocket from "ws";
 
 // --- CẤU HÌNH ---
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const WS_URL = "wss://websocket.azhkthg1.net/websocket?token=";
-const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJzc2NoaWNobWVtIiwiYm90IjowLCJpc01lcmNoYW50IjpmYWxzZSwidmVyaWZpZWRCYW5rQWNjb3VudCI6ZmFsc2UsInBsYXlFdmVudExvYmJ5IjpmYWxzZSwiY3VzdG9tZXJJZCI6MzI2OTA1OTg1LCJhZmZJZCI6InN1bndpbiIsImJhbm5lZCI6ZmFsc2UsImJyYW5kIjoic3VuLndpbiIsInRpbWVzdGFtcCI6MTc2NTQ2OTYxNjg3MCwibG9ja0dhbWVzIjpbXSwiYW1vdW50IjowLCJsb2NrQ2hhdCI6ZmFsc2UsInBob25lVmVyaWZpZWQiOmZhbHNlLCJpcEFkZHJlc3MiOiIyNDAyOjgwMDo2ZjVmOmNiYzU6ODRjMTo2YzQzOjhmZGQ6NDdkYSIsIm11dGUiOmZhbHNlLCJhdmF0YXIiOiJodHRwczovL2ltYWdlcy5zd2luc2hvcC5uZXQvaW1hZ2VzL2F2YXRhci9hdmF0YXJfMTkucG5nIiwicGxhdGZvcm1JZCI6MiwidXNlcklkIjoiOWQyMTliNGYtMjQxYS00ZmU2LTkyNDItMDQ5MWYxYzRhMDVjIiwicmVnVGltZSI6MTc2MzcyNzkwNzk0MCwicGhvbmUiOiIiLCJkZXBvc2l0IjpmYWxzZSwidXNlcm5hbWUiOiJTQ19naWF0aGluaDIxMzMifQ.XGiELjKKAgIc-0dKYjZFOlDeH2e-LC_PvrvrzPcdY1U";
+const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJzYW5nZGVwemFpMDlubyIsImJvdCI6MCwiaXNNZXJjaGFudCI6ZmFsc2UsInZlcmlmaWVkQmFua0FjY291bnQiOnRydWUsInBsYXlFdmVudExvYmJ5IjpmYWxzZSwiY3VzdG9tZXJJZCI6MjIxNjQwNjcyLCJhZmZJZCI6IlN1bndpbiIsImJhbm5lZCI6ZmFsc2UsImJyYW5kIjoic3VuLndpbiIsInRpbWVzdGFtcCI6MTc2NjE0NTc4OTM5MywibG9ja0dhbWVzIjpbXSwiYW1vdW50IjowLCJsb2NrQ2hhdCI6ZmFsc2UsInBob25lVmVyaWZpZWQiOnRydWUsImlwQWRkcmVzcyI6IjExMy4xNzQuNzguMjU1IiwibXV0ZSI6ZmFsc2UsImF2YXRhciI6Imh0dHBzOi8vaW1hZ2VzLnN3aW5zaG9wLm5ldC9pbWFnZXMvYXZhdGFyL2F2YXRhcl8xNS5wbmciLCJwbGF0Zm9ybUlkIjo0LCJ1c2VySWQiOiI3ODRmNGU0Mi1iZWExLTRiZTUtYjgwNS03MmJlZjY5N2UwMTIiLCJyZWdUaW1lIjoxNzQyMjMyMzQ1MTkxLCJwaG9uZSI6Ijg0ODg2MDI3NzY3IiwiZGVwb3NpdCI6dHJ1ZSwidXNlcm5hbWUiOiJTQ19tc2FuZ3p6MDkifQ.5oYE3n53K87uaOvW6CldZ84CXXmQ7B9P-TrZMYUKenI";
 
-// --- GLOBAL STATE ---
-let results = [];
+// --- STATE QUẢN LÝ ---
+let rikResults = [];
+let rikCurrentSession = null;
 let rikWS = null;
 let rikIntervalCmd = null;
-let rikCurrentSession = null;
+let connectionMonitor = null;
+let lastMessageTime = Date.now();
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 20;
+let isApiActive = false; // Cờ kiểm tra API đã được gọi
 
-// --- LOẠI CẦU (Logic Cũ) ---
-const BRIDGE_TYPES = {
-  'cầu đơn tài': { pattern: /t$/, description: '1 kết quả Tài' },
-  'cầu đơn xỉu': { pattern: /x$/, description: '1 kết quả Xỉu' },
-  'cầu 2 tài': { pattern: /tt$/, description: '2 Tài liên tiếp' },
-  'cầu 2 xỉu': { pattern: /xx$/, description: '2 Xỉu liên tiếp' },
-  'cầu 3 tài': { pattern: /ttt$/, description: '3 Tài liên tiếp' },
-  'cầu 3 xỉu': { pattern: /xxx$/, description: '3 Xỉu liên tiếp' },
-  'cầu 4 tài': { pattern: /tttt$/, description: '4 Tài liên tiếp' },
-  'cầu 4 xỉu': { pattern: /xxxx$/, description: '4 Xỉu liên tiếp' },
-  'cầu 5+ tài': { pattern: /t{5,}$/, description: '5+ Tài liên tiếp' },
-  'cầu 5+ xỉu': { pattern: /x{5,}$/, description: '5+ Xỉu liên tiếp' },
-  'lưỡng cầu 1-1': { pattern: /(tx|xt)$/, description: 'Đổi chiều mỗi phiên' },
-  'lưỡng cầu 2-2': { pattern: /(ttxx|xxtt)$/, description: '2T-2X hoặc 2X-2T' },
+// --- CƠ SỞ DỮ LIỆU CẦU MỞ RỘNG ---
+const PATTERN_DATABASE = {
+    'Cầu Bệt': {
+        patterns: ['ttttt', 'xxxxx', 'tttt', 'xxxx', 'ttt', 'xxx'],
+        weight: 1.3
+    },
+    'Cầu 1-1': {
+        patterns: ['txtx', 'xtxt', 'txtxt', 'xtxtx', 'xtxtxt'],
+        weight: 1.2
+    },
+    'Cầu 2-2': {
+        patterns: ['ttxx', 'xxtt', 'ttxxtt', 'xxttxx', 'ttxxttxx'],
+        weight: 1.25
+    },
+    'Cầu 1-2': {
+        patterns: ['txxtt', 'xttxx', 'txx', 'xtt'],
+        weight: 1.15
+    },
+    'Cầu 2-1': {
+        patterns: ['ttxttx', 'xxtxxt', 'ttx', 'xxt'],
+        weight: 1.15
+    },
+    'Cầu 1-2-3': {
+        patterns: ['txxttt', 'xttxxx', 'txxtt', 'xttxx'],
+        weight: 1.4
+    },
+    'Cầu 3-2-1': {
+        patterns: ['tttxxt', 'xxxttt', 'tttxx', 'xxxtt'],
+        weight: 1.4
+    },
+    'Cầu Đối Xứng': {
+        patterns: ['ttxtt', 'xxtxx', 'txtxt', 'xtxtx', 'txxxxt', 'xttttx'],
+        weight: 1.35
+    },
+    'Cầu Nghiêng Tài': {
+        patterns: ['ttttxt', 'ttttxtt', 'ttttxtttt'],
+        weight: 1.5
+    },
+    'Cầu Nghiêng Xỉu': {
+        patterns: ['xxxxxt', 'xxxxxtxx', 'xxxxxxtxxx'],
+        weight: 1.5
+    },
+    'Cầu Lệch 3-1': {
+        patterns: ['tttxtttx', 'xxxxtxxx'],
+        weight: 1.3
+    },
+    'Cầu Lệch 4-1': {
+        patterns: ['ttttxttttx', 'xxxxxtxxxx'],
+        weight: 1.3
+    },
+    'Cầu Rồng': {
+        patterns: ['tttttxxx', 'xxxxxttt', 'ttttxxxx', 'xxxxxtttt'],
+        weight: 1.45
+    },
+    'Cầu Đảo Chiều': {
+        patterns: ['ttttxxxx', 'xxxxtttt', 'tttxxx', 'xxxttt'],
+        weight: 1.4
+    }
 };
 
-// --- AI CORE (Logic SmartAI Cũ) ---
-class SmartAI {
-  constructor() {
-    this.history = [];
-    this.stats = { total: 0, correct: 0, wrong: 0 };
-    this.pendingPrediction = null;
-    this.predictionLog = [];
-  }
+// --- THUẬT TOÁN NÂNG CAO ---
 
-  analyzePattern(history) {
-    if (history.length < 10) return null;
-    const recent = history.slice(-8).map(h => h.tx.toLowerCase()).join('');
-    const fullHistory = history.slice(-30).map(h => h.tx.toLowerCase()).join('');
-    let tScore = 0, xScore = 0;
+// 1. Markov Chain (Cải tiến: Multi-order)
+function algo_MarkovChain(history, order = 2) {
+    if (history.length < 20) return null;
+    const tx = history.map(h => h.tx);
     
-    for (let len = 3; len <= 5; len++) {
-      if (recent.length < len) continue;
-      const pattern = recent.slice(-len);
-      for (let i = 0; i <= fullHistory.length - len - 1; i++) {
-        if (fullHistory.substr(i, len) === pattern) {
-          const next = fullHistory.charAt(i + len);
-          if (next === 't') tScore += len;
-          else if (next === 'x') xScore += len;
+    // Lấy chuỗi trạng thái cuối
+    const state = tx.slice(-order).join('');
+    
+    let tCount = 0, xCount = 0;
+    
+    // Tìm tất cả các lần xuất hiện state này trong lịch sử
+    for (let i = 0; i < tx.length - order; i++) {
+        const currentState = tx.slice(i, i + order).join('');
+        if (currentState === state) {
+            const next = tx[i + order];
+            if (next === 'T') tCount++;
+            else if (next === 'X') xCount++;
         }
-      }
     }
     
-    if (tScore > xScore * 1.3) return 'T';
-    if (xScore > tScore * 1.3) return 'X';
-    return null;
-  }
-
-  detectBridge(history) {
-    if (history.length < 5) return null;
-    const recent = history.slice(-5).map(h => h.tx);
-    const last = recent[recent.length - 1];
-    let runLength = 1;
+    const total = tCount + xCount;
+    if (total === 0) return null;
     
-    for (let i = recent.length - 2; i >= 0; i--) {
-      if (recent[i] === last) runLength++;
-      else break;
+    const pT = tCount / total;
+    const confidence = Math.abs(pT - 0.5) * 2; // 0-1 scale
+    
+    if (pT > 0.55) return { pick: 'T', confidence };
+    if (pT < 0.45) return { pick: 'X', confidence };
+    return null;
+}
+
+// 2. Pattern Recognition với Fuzzy Matching
+function algo_PatternRecognition(history) {
+    const txStr = history.map(h => h.tx).slice(-20).join('').toLowerCase();
+    let bestMatch = null;
+    let maxScore = 0;
+
+    for (const [type, data] of Object.entries(PATTERN_DATABASE)) {
+        for (const pattern of data.patterns) {
+            // Exact match
+            if (txStr.endsWith(pattern)) {
+                const score = pattern.length * data.weight;
+                if (score > maxScore) {
+                    maxScore = score;
+                    
+                    // Logic dự đoán dựa trên loại cầu
+                    if (type.includes('Nghiêng Tài')) {
+                        bestMatch = { pick: 'T', type, confidence: 0.8 };
+                    } else if (type.includes('Nghiêng Xỉu')) {
+                        bestMatch = { pick: 'X', type, confidence: 0.8 };
+                    } else if (type === 'Cầu Bệt') {
+                        // Cầu bệt dài -> đánh gãy
+                        const lastChar = pattern[pattern.length - 1];
+                        bestMatch = { 
+                            pick: lastChar === 't' ? 'X' : 'T', 
+                            type, 
+                            confidence: Math.min(0.9, pattern.length / 6)
+                        };
+                    } else if (type === 'Cầu Đảo Chiều') {
+                        // Đảo chiều -> đánh ngược xu hướng
+                        const lastChar = pattern[pattern.length - 1];
+                        bestMatch = { pick: lastChar === 't' ? 'X' : 'T', type, confidence: 0.75 };
+                    } else if (type === 'Cầu 1-1') {
+                        // 1-1 -> tiếp tục đảo
+                        const lastChar = pattern[pattern.length - 1];
+                        bestMatch = { pick: lastChar === 't' ? 'X' : 'T', type, confidence: 0.7 };
+                    } else if (type === 'Cầu 2-2') {
+                        // 2-2 -> đánh theo cặp
+                        const last2 = pattern.slice(-2);
+                        bestMatch = { pick: last2 === 'tt' ? 'X' : 'T', type, confidence: 0.75 };
+                    } else {
+                        bestMatch = { pick: null, type, confidence: 0.5 };
+                    }
+                }
+            }
+        }
     }
     
-    if (runLength >= 2 && runLength <= 3) return last;
-    if (runLength >= 4) return last === 'T' ? 'X' : 'T';
-    return null;
-  }
+    return bestMatch;
+}
 
-  analyzeTrend(history) {
+// 3. Fibonacci Sequence Prediction
+function algo_Fibonacci(history) {
     if (history.length < 15) return null;
-    const totals = history.slice(-15).map(h => h.total);
-    const avg = totals.reduce((a, b) => a + b) / totals.length;
-    const recentAvg = totals.slice(-5).reduce((a, b) => a + b) / 5;
     
-    if (recentAvg > avg + 0.8) return 'X';
-    if (recentAvg < avg - 0.8) return 'T';
+    const tx = history.map(h => h.tx);
+    const sequences = [];
+    let currentSeq = { char: tx[0], length: 1 };
+    
+    for (let i = 1; i < tx.length; i++) {
+        if (tx[i] === currentSeq.char) {
+            currentSeq.length++;
+        } else {
+            sequences.push(currentSeq);
+            currentSeq = { char: tx[i], length: 1 };
+        }
+    }
+    sequences.push(currentSeq);
+    
+    // Kiểm tra chuỗi Fibonacci: 1, 1, 2, 3, 5, 8...
+    if (sequences.length >= 4) {
+        const last4 = sequences.slice(-4).map(s => s.length);
+        const isFib = (last4[2] === last4[0] + last4[1]) && (last4[3] === last4[1] + last4[2]);
+        
+        if (isFib) {
+            const nextLen = last4[2] + last4[3];
+            const currentLen = sequences[sequences.length - 1].length;
+            
+            if (currentLen < nextLen) {
+                return { 
+                    pick: sequences[sequences.length - 1].char, 
+                    confidence: 0.75 
+                };
+            } else {
+                return { 
+                    pick: sequences[sequences.length - 1].char === 'T' ? 'X' : 'T', 
+                    confidence: 0.8 
+                };
+            }
+        }
+    }
+    
     return null;
-  }
+}
 
-  predict() {
-    if (this.history.length < 10) {
-      return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'chưa đủ dữ liệu' };
+// 4. Momentum Oscillator
+function algo_Momentum(history) {
+    if (history.length < 20) return null;
+    
+    const tx = history.map(h => h.tx === 'T' ? 1 : -1);
+    const momentum = tx.slice(-10).reduce((a, b) => a + b, 0);
+    const prevMomentum = tx.slice(-20, -10).reduce((a, b) => a + b, 0);
+    
+    const change = momentum - prevMomentum;
+    
+    if (momentum > 4 && change > 0) return { pick: 'T', confidence: 0.7 };
+    if (momentum < -4 && change < 0) return { pick: 'X', confidence: 0.7 };
+    if (momentum > 3 && change < -2) return { pick: 'X', confidence: 0.75 }; // Đảo chiều
+    if (momentum < -3 && change > 2) return { pick: 'T', confidence: 0.75 }; // Đảo chiều
+    
+    return null;
+}
+
+// 5. Entropy Analysis (Đo độ hỗn loạn)
+function algo_Entropy(history) {
+    if (history.length < 30) return null;
+    
+    const recent = history.slice(-15);
+    const tCount = recent.filter(r => r.tx === 'T').length;
+    const xCount = 15 - tCount;
+    
+    // Tính entropy
+    const pT = tCount / 15;
+    const pX = xCount / 15;
+    const entropy = -(pT * Math.log2(pT + 0.001) + pX * Math.log2(pX + 0.001));
+    
+    // Entropy cao (>0.9) = Hỗn loạn -> Khó đoán
+    // Entropy thấp (<0.6) = Có xu hướng rõ ràng
+    
+    if (entropy < 0.7) {
+        if (tCount > xCount) return { pick: 'T', confidence: 0.65 };
+        else return { pick: 'X', confidence: 0.65 };
+    }
+    
+    return null; // Quá hỗn loạn
+}
+
+// 6. Adaptive Trend với EMA
+function algo_AdaptiveTrend(history) {
+    if (history.length < 20) return null;
+    
+    const values = history.map(h => h.tx === 'T' ? 1 : 0);
+    
+    // EMA 10 và EMA 20
+    const ema10 = calculateEMA(values, 10);
+    const ema20 = calculateEMA(values, 20);
+    
+    if (ema10 > ema20 && ema10 > 0.6) return { pick: 'T', confidence: 0.7 };
+    if (ema10 < ema20 && ema10 < 0.4) return { pick: 'X', confidence: 0.7 };
+    
+    return null;
+}
+
+function calculateEMA(values, period) {
+    const k = 2 / (period + 1);
+    let ema = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    
+    for (let i = period; i < values.length; i++) {
+        ema = values[i] * k + ema * (1 - k);
+    }
+    
+    return ema;
+}
+
+// 7. RSI (Relative Strength Index)
+function algo_RSI(history) {
+    if (history.length < 14) return null;
+    
+    const values = history.map(h => h.total);
+    let gains = 0, losses = 0;
+    
+    for (let i = 1; i < values.length; i++) {
+        const diff = values[i] - values[i - 1];
+        if (diff > 0) gains += diff;
+        else losses += Math.abs(diff);
+    }
+    
+    const avgGain = gains / (values.length - 1);
+    const avgLoss = losses / (values.length - 1);
+    
+    if (avgLoss === 0) return { pick: 'T', confidence: 0.6 };
+    
+    const rs = avgGain / avgLoss;
+    const rsi = 100 - (100 / (1 + rs));
+    
+    if (rsi > 70) return { pick: 'X', confidence: 0.7 }; // Quá mua
+    if (rsi < 30) return { pick: 'T', confidence: 0.7 }; // Quá bán
+    
+    return null;
+}
+
+// 8. Mean Reversion
+function algo_MeanReversion(history) {
+    if (history.length < 30) return null;
+    
+    const totals = history.map(h => h.total);
+    const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+    const recent = totals.slice(-5);
+    const recentAvg = recent.reduce((a, b) => a + b, 0) / 5;
+    
+    const deviation = Math.abs(recentAvg - mean);
+    
+    if (deviation > 2) {
+        if (recentAvg > mean) return { pick: 'X', confidence: 0.65 }; // Quay về mean
+        else return { pick: 'T', confidence: 0.65 };
+    }
+    
+    return null;
+}
+
+// --- MASTER AI CLASS ---
+class MasterAI {
+    constructor() {
+        this.history = [];
+        this.predictions = []; // Lưu dự đoán theo session
+        this.stats = {
+            total: 0,
+            correct: 0,
+            wrong: 0,
+            waiting: 0
+        };
+        
+        // Trọng số động cho từng thuật toán
+        this.algoWeights = {
+            markov: 1.5,
+            pattern: 1.8,
+            fibonacci: 1.2,
+            momentum: 1.3,
+            entropy: 1.0,
+            trend: 1.4,
+            rsi: 1.1,
+            meanReversion: 1.0
+        };
     }
 
-    const predictions = [];
-    const p1 = this.analyzePattern(this.history);
-    if (p1) predictions.push({ pred: p1, weight: 2, reason: 'pattern' });
-    
-    const p2 = this.detectBridge(this.history);
-    if (p2) predictions.push({ pred: p2, weight: 1.5, reason: 'bridge' });
-    
-    const p3 = this.analyzeTrend(this.history);
-    if (p3) predictions.push({ pred: p3, weight: 1, reason: 'trend' });
-    
-    if (predictions.length === 0) {
-      return { prediction: 'tài', confidence: 50, raw: 'T', reason: 'no signal' };
+    // Chỉ tính toán backtest khi API được gọi lần đầu
+    initializeFromHistory(data) {
+        console.log('🔄 Đang khởi tạo AI từ lịch sử...');
+        
+        this.history = [...data].sort((a, b) => a.session - b.session);
+        this.predictions = [];
+        this.stats = { total: 0, correct: 0, wrong: 0, waiting: 0 };
+        
+        // Chỉ backtest từ phiên thứ 30 trở đi (đủ data để học)
+        if (this.history.length > 30) {
+            for (let i = 30; i < this.history.length; i++) {
+                const trainData = this.history.slice(0, i);
+                const testRecord = this.history[i];
+                
+                // Dự đoán dựa trên data trước đó
+                const prediction = this.predict(trainData);
+                
+                if (prediction.rawPrediction) {
+                    this.stats.total++;
+                    
+                    if (prediction.rawPrediction === testRecord.tx) {
+                        this.stats.correct++;
+                    } else {
+                        this.stats.wrong++;
+                    }
+                }
+            }
+        }
+        
+        console.log(`✅ Backtest hoàn tất: ${this.stats.correct}/${this.stats.total} = ${this.getRate()}`);
     }
 
-    let tVotes = 0, xVotes = 0;
-    predictions.forEach(p => {
-      if (p.pred === 'T') tVotes += p.weight;
-      else xVotes += p.weight;
+    addResult(record) {
+        // Kiểm tra trùng lặp
+        const exists = this.history.find(h => h.session === record.session);
+        if (exists) return;
+
+        // Kiểm tra dự đoán trước đó
+        const pred = this.predictions.find(p => p.session === record.session);
+        
+        if (pred && pred.pick) {
+            this.stats.total++;
+            
+            if (pred.pick === record.tx) {
+                this.stats.correct++;
+                console.log(`✅ ĐÚNG - Phiên ${record.session}: Dự đoán ${pred.pick} = Kết quả ${record.tx}`);
+            } else {
+                this.stats.wrong++;
+                console.log(`❌ SAI - Phiên ${record.session}: Dự đoán ${pred.pick} ≠ Kết quả ${record.tx}`);
+            }
+            
+            // Xóa prediction đã xử lý
+            this.predictions = this.predictions.filter(p => p.session !== record.session);
+        }
+
+        // Thêm vào history
+        this.history.push(record);
+        if (this.history.length > 300) {
+            this.history = this.history.slice(-300);
+        }
+    }
+
+    predict(customHistory = null) {
+        const history = customHistory || this.history;
+        
+        if (history.length < 10) {
+            return { 
+                prediction: 'đang học...', 
+                confidence: 0,
+                bridgeType: 'Chưa đủ dữ liệu',
+                rawPrediction: null
+            };
+        }
+
+        const votes = { T: 0, X: 0 };
+        const contributors = [];
+
+        // Thu thập votes từ tất cả thuật toán
+        const algos = [
+            { name: 'Markov', fn: () => algo_MarkovChain(history, 2), weight: this.algoWeights.markov },
+            { name: 'Pattern', fn: () => algo_PatternRecognition(history), weight: this.algoWeights.pattern },
+            { name: 'Fibonacci', fn: () => algo_Fibonacci(history), weight: this.algoWeights.fibonacci },
+            { name: 'Momentum', fn: () => algo_Momentum(history), weight: this.algoWeights.momentum },
+            { name: 'Entropy', fn: () => algo_Entropy(history), weight: this.algoWeights.entropy },
+            { name: 'Trend', fn: () => algo_AdaptiveTrend(history), weight: this.algoWeights.trend },
+            { name: 'RSI', fn: () => algo_RSI(history), weight: this.algoWeights.rsi },
+            { name: 'MeanRev', fn: () => algo_MeanReversion(history), weight: this.algoWeights.meanReversion }
+        ];
+
+        algos.forEach(algo => {
+            const result = algo.fn();
+            if (result && result.pick) {
+                const score = algo.weight * result.confidence;
+                votes[result.pick] += score;
+                contributors.push({
+                    name: algo.name,
+                    pick: result.pick,
+                    score: score.toFixed(2)
+                });
+            }
+        });
+
+        // Quyết định cuối cùng
+        let finalPick = null;
+        let confidence = 0;
+
+        const totalVotes = votes.T + votes.X;
+        
+        if (totalVotes === 0) {
+            // Fallback: Dùng xu hướng gần nhất
+            const recent = history.slice(-5);
+            const tCount = recent.filter(r => r.tx === 'T').length;
+            finalPick = tCount > 2 ? 'X' : 'T'; // Đánh ngược xu hướng
+            confidence = 50;
+        } else {
+            if (votes.T > votes.X) {
+                finalPick = 'T';
+                confidence = (votes.T / totalVotes) * 100;
+            } else {
+                finalPick = 'X';
+                confidence = (votes.X / totalVotes) * 100;
+            }
+        }
+
+        const bridgeType = this.detectBridgeType(history);
+
+        // Lưu prediction cho phiên tiếp theo (chỉ khi dùng history thật)
+        if (!customHistory && history.length > 0) {
+            const nextSession = history[history.length - 1].session + 1;
+            
+            // Xóa predictions cũ
+            this.predictions = this.predictions.filter(p => p.session >= nextSession);
+            
+            // Thêm prediction mới
+            if (!this.predictions.find(p => p.session === nextSession)) {
+                this.predictions.push({
+                    session: nextSession,
+                    pick: finalPick,
+                    confidence,
+                    contributors
+                });
+            }
+        }
+
+        return {
+            prediction: finalPick === 'T' ? 'tài' : 'xỉu',
+            rawPrediction: finalPick,
+            confidence: confidence.toFixed(1),
+            bridgeType,
+            contributors
+        };
+    }
+
+    detectBridgeType(history = null) {
+        const data = history || this.history;
+        const txStr = data.map(h => h.tx).slice(-15).join('').toLowerCase();
+        
+        for (const [name, info] of Object.entries(PATTERN_DATABASE)) {
+            if (info.patterns.some(p => txStr.includes(p))) {
+                return name;
+            }
+        }
+        
+        return "Cầu Tự Do";
+    }
+
+    getRate() {
+        if (this.stats.total === 0) return "0%";
+        return ((this.stats.correct / this.stats.total) * 100).toFixed(1) + "%";
+    }
+
+    getDetailedStats() {
+        return {
+            tong_du_doan: this.stats.total,
+            dung: this.stats.correct,
+            sai: this.stats.wrong,
+            dang_cho: this.predictions.length,
+            ti_le_dung: this.getRate(),
+            do_chinh_xac: this.stats.total > 0 ? (this.stats.correct / this.stats.total).toFixed(3) : '0.000'
+        };
+    }
+}
+
+const ai = new MasterAI();
+
+// --- SERVER SETUP ---
+const app = fastify();
+app.register(cors, { origin: "*" });
+
+app.get("/sunwinsew", async (request, reply) => {
+    // Đánh dấu API đã được gọi
+    if (!isApiActive) {
+        isApiActive = true;
+        
+        // Nếu đã có dữ liệu từ WS, khởi tạo AI ngay
+        if (rikResults.length > 0) {
+            console.log('🎯 API được gọi lần đầu - Bắt đầu xử lý dữ liệu...');
+            ai.initializeFromHistory(rikResults);
+        }
+    }
+
+    if (rikResults.length === 0) {
+        return { 
+            status: "loading", 
+            message: "Đang kết nối WebSocket và tải dữ liệu..." 
+        };
+    }
+
+    const lastRes = rikResults[0];
+    const prediction = ai.predict();
+
+    return {
+        id: "@minhsangdangcap_v2_pro",
+        phien_hien_tai: lastRes.session,
+        ket_qua: lastRes.result.toLowerCase(),
+        xuc_xac: lastRes.dice,
+        tong_diem: lastRes.total,
+        phien_du_doan: lastRes.session + 1,
+        du_doan: prediction.prediction,
+        do_tu_tin: prediction.confidence + '%',
+        loai_cau: prediction.bridgeType,
+        cac_thuat_toan_vote: prediction.contributors || [],
+        thong_ke_chi_tiet: ai.getDetailedStats(),
+        trang_thai: isApiActive ? 'active' : 'standby'
+    };
+});
+
+// --- WEBSOCKET LOGIC ---
+function decodeBinary(data) {
+    try {
+        const dec = new TextDecoder("utf-8");
+        const str = dec.decode(data);
+        if (str.startsWith("[")) return JSON.parse(str);
+    } catch(e) {}
+    return null;
+}
+
+function connectWebSocket() {
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.error("⛔ Dừng kết nối sau quá nhiều lần thất bại.");
+        return;
+    }
+
+    console.log(`🔌 Kết nối Sunwin WS (Lần ${reconnectAttempts + 1})...`);
+    
+    if (rikWS) { 
+        try { rikWS.terminate(); } catch(e){} 
+    }
+    clearInterval(rikIntervalCmd);
+    clearInterval(connectionMonitor);
+
+    rikWS = new WebSocket(`${WS_URL}${TOKEN}`, {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Origin": "https://web.sunwin.win"
+        }
     });
 
-    const total = tVotes + xVotes;
-    const finalPred = tVotes > xVotes ? 'T' : 'X';
-    const confidence = Math.round((Math.max(tVotes, xVotes) / total) * 100);
-
-    return {
-      prediction: finalPred === 'T' ? 'tài' : 'xỉu',
-      confidence: Math.min(95, Math.max(55, confidence)),
-      raw: finalPred,
-      reason: predictions.map(p => p.reason).join(', ')
-    };
-  }
-
-  addResult(record) {
-    const parsed = {
-      session: Number(record.session),
-      dice: record.dice,
-      total: Number(record.total),
-      result: record.result,
-      tx: Number(record.total) >= 11 ? 'T' : 'X',
-      timestamp: new Date().toISOString()
-    };
-
-    // Kiểm tra prediction
-    if (this.pendingPrediction && this.pendingPrediction.forSession === parsed.session) {
-      this.stats.total++;
-      const isCorrect = this.pendingPrediction.raw === parsed.tx;
-      
-      if (isCorrect) this.stats.correct++;
-      else this.stats.wrong++;
-
-      this.predictionLog.push({
-        session: parsed.session,
-        predicted: this.pendingPrediction.raw,
-        actual: parsed.tx,
-        correct: isCorrect
-      });
-
-      if (this.predictionLog.length > 100) {
-        this.predictionLog = this.predictionLog.slice(-100);
-      }
-      this.pendingPrediction = null;
-    }
-
-    this.history.push(parsed);
-    if (this.history.length > 200) {
-      this.history = this.history.slice(-150);
-    }
-
-    return parsed;
-  }
-
-  loadHistory(historyData) {
-    this.history = historyData.map(h => ({
-      session: Number(h.session),
-      dice: h.dice,
-      total: Number(h.total),
-      result: h.result,
-      tx: Number(h.total) >= 11 ? 'T' : 'X',
-      timestamp: new Date().toISOString()
-    })).sort((a, b) => a.session - b.session);
-  }
-
-  savePredictionForNextSession(currentSession) {
-    const pred = this.predict();
-    this.pendingPrediction = {
-      ...pred,
-      forSession: currentSession + 1,
-      createdAt: new Date().toISOString()
-    };
-    return pred;
-  }
-
-  detectBridgeType() {
-    if (this.history.length < 5) return 'chưa đủ dữ liệu';
-    const recent = this.history.slice(-5).map(h => h.tx.toLowerCase()).join('');
-    
-    for (const [name, info] of Object.entries(BRIDGE_TYPES)) {
-      if (info.pattern.test(recent)) return `${name} (${info.description})`;
-    }
-    return 'cầu hỗn hợp';
-  }
-
-  getPattern() {
-    if (this.history.length < 10) return 'đang thu thập';
-    const pattern = this.history.slice(-20).map(h => h.tx).join('');
-    const tCount = (pattern.match(/T/g) || []).length;
-    const xCount = (pattern.match(/X/g) || []).length;
-    return `${pattern} (T:${tCount} X:${xCount})`;
-  }
-
-  getCurrentPrediction() {
-    if (!this.pendingPrediction) return this.predict();
-    return this.pendingPrediction;
-  }
-
-  getStats() {
-    return {
-      so_lan_du_doan: this.stats.total,
-      so_dung: this.stats.correct,
-      so_sai: this.stats.wrong,
-      ti_le_dung: this.stats.total > 0 ? `${Math.round((this.stats.correct / this.stats.total) * 100)}%` : "0%"
-    };
-  }
-}
-
-const ai = new SmartAI();
-
-// --- API SERVER (JSON CŨ) ---
-const app = fastify({ logger: false });
-await app.register(cors, { origin: "*" });
-
-app.get("/sunwinsew", async () => {
-  try {
-    const lastResult = results[0];
-    
-    if (!lastResult) {
-      return {
-        id: "@minhsangdangcap",
-        phien_hien_tai: null,
-        ket_qua: null,
-        tong: null,
-        phien_du_doan: null,
-        du_doan: null,
-        pattern: null,
-        loai_cau: null,
-        thong_ke: ai.getStats()
-      };
-    }
-
-    const prediction = ai.getCurrentPrediction();
-    const nextSession = lastResult.session + 1;
-
-    // --- JSON OUTPUT GỐC ---
-    return {
-      id: "@minhsangdangcap",
-      phien_hien_tai: lastResult.session,
-      ket_qua: lastResult.result.toLowerCase(),
-      tong: lastResult.total,
-      phien_du_doan: nextSession,
-      du_doan: prediction.prediction,
-      confidence: prediction.confidence,
-      pattern: ai.getPattern(),
-      loai_cau: ai.detectBridgeType(), // Dòng này quan trọng với bạn
-      thong_ke: ai.getStats()
-    };
-  } catch (error) {
-    return { 
-      id: "@minhsangdangcap",
-      error: error.message 
-    };
-  }
-});
-
-app.get("/api/taixiu/history", async () => {
-  return {
-    id: "@minhsangdangcap",
-    total: results.length,
-    results: results.slice(0, 50).map(r => ({
-      phien: r.session,
-      xuc_xac: r.dice,
-      tong: r.total,
-      ket_qua: r.result.toLowerCase(),
-      timestamp: r.timestamp
-    }))
-  };
-});
-
-app.get("/api/stats", async () => {
-    return {
-        id: "@minhsangdangcap",
-        ai_stats: ai.getStats()
-    }
-});
-
-await app.listen({ port: PORT, host: "0.0.0.0" });
-console.log(`\n🚀 Server chạy tại: http://localhost:${PORT}`);
-
-// --- WEBSOCKET HANDLERS (LOGIC MỚI - KẾT NỐI CHUẨN) ---
-function decodeBinaryMessage(data) {
-    try {
-        const message = new TextDecoder().decode(data);
-        if (message.startsWith("[") || message.startsWith("{")) {
-            return JSON.parse(message);
-        }
-        return null;
-    } catch { return null; }
-}
-
-function sendRikCmd1005() {
-    if (rikWS?.readyState === WebSocket.OPEN) {
-        // Gửi lệnh lấy lịch sử
-        rikWS.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
-    }
-}
-
-function connectRikWebSocket() {
-    console.log("\n🔌 Đang kết nối WebSocket...");
-    if (rikWS) {
-        try { rikWS.close(); } catch(e) {}
-        rikWS = null;
-    }
-    if (rikIntervalCmd) clearInterval(rikIntervalCmd);
-
-    rikWS = new WebSocket(`${WS_URL}${TOKEN}`);
-
     rikWS.on("open", () => {
-        console.log("✅ WebSocket Connected! Đang gửi xác thực...");
-        const authPayload = [1, "MiniGame", "SC_giathinh2133", "thinh211", {
+        console.log("✅ WebSocket Connected!");
+        reconnectAttempts = 0;
+        lastMessageTime = Date.now();
+
+        rikWS.send(JSON.stringify([1, "MiniGame", "SC_giathinh2133", "thinh211", {
             info: JSON.stringify({
-                ipAddress: "2402:800:62cd:b4d1:8c64:a3c9:12bf:c19a",
+                ipAddress: "127.0.0.1",
                 wsToken: TOKEN,
-                userId: "cdbaf598-e4ef-47f8-b4a6-a4881098db86",
-                username: "SC_hellokietne212",
-                timestamp: Date.now(),
+                userId: "advanced_ai_bot",
+                username: "AI_Pro_System",
+                timestamp: Date.now()
             }),
-            signature: "473ABDDDA6BDD74D8F0B6036223B0E3A002A518203A9BB9F95AD763E3BF969EC2CBBA61ED1A3A9E217B52A4055658D7BEA38F89B806285974C7F3F62A9400066709B4746585887D00C9796552671894F826E69EFD234F6778A5DDC24830CEF68D51217EF047644E0B0EB1CB26942EB34AEF114AEC36A6DF833BB10F7D122EA5E",
-            pid: 5,
-            subi: true,
-        }];
-        
-        rikWS.send(JSON.stringify(authPayload));
-        rikIntervalCmd = setInterval(sendRikCmd1005, 3000); 
+            signature: "advanced_signature",
+            pid: 5, 
+            subi: true
+        }]));
+
+        rikIntervalCmd = setInterval(() => {
+            if(rikWS.readyState === WebSocket.OPEN) {
+                rikWS.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
+            }
+        }, 5000);
+
+        connectionMonitor = setInterval(() => {
+            if (Date.now() - lastMessageTime > 30000) {
+                console.warn("⚠️ Không nhận dữ liệu quá 30s - Reconnecting...");
+                connectWebSocket();
+            }
+        }, 10000);
     });
 
     rikWS.on("message", (data) => {
-        try {
-            const json = typeof data === "string" ? JSON.parse(data) : decodeBinaryMessage(data);
-            if (!json) return;
+        lastMessageTime = Date.now();
+        
+        let json = decodeBinary(data);
+        if (!json) {
+            try { json = JSON.parse(data); } catch(e) { return; }
+        }
+        if (!json) return;
 
-            // Xử lý LIVE
-            if (json.session && Array.isArray(json.dice)) {
-                const record = {
-                    session: json.session,
-                    dice: json.dice,
-                    total: json.total,
-                    result: json.result,
-                };
-                
-                ai.addResult(record); // Nạp vào AI
-                
-                if (!rikCurrentSession || record.session > rikCurrentSession) {
-                    rikCurrentSession = record.session;
-                    results.unshift(ai.addResult(record)); // Lưu vào results để API trả về
-                    if (results.length > 100) results.pop();
-                    
-                    ai.savePredictionForNextSession(record.session); // Lưu dự đoán cho phiên sau
-                    
-                    console.log(`\n🎲 KẾT QUẢ #${record.session}: ${record.result}`);
-                }
-            } 
-            // Xử lý LỊCH SỬ
-            else if (Array.isArray(json) && json[1]?.htr) {
-                const newHistory = json[1].htr.map((i) => ({
-                    session: i.sid,
-                    dice: [i.d1, i.d2, i.d3],
-                    total: i.d1 + i.d2 + i.d3,
-                    result: i.d1 + i.d2 + i.d3 >= 11 ? "Tài" : "Xỉu",
-                    tx: i.d1 + i.d2 + i.d3 >= 11 ? "T" : "X"
-                })).sort((a, b) => a.session - b.session);
+        // XỬ LÝ LỊCH SỬ BAN ĐẦU
+        if (Array.isArray(json) && json[1] && json[1].htr) {
+            console.log("📥 Nhận lịch sử từ WebSocket...");
+            
+            const historyData = json[1].htr.map(i => ({
+                session: i.sid,
+                dice: [i.d1, i.d2, i.d3],
+                total: i.d1 + i.d2 + i.d3,
+                result: (i.d1 + i.d2 + i.d3) >= 11 ? 'Tai' : 'Xiu',
+                tx: (i.d1 + i.d2 + i.d3) >= 11 ? 'T' : 'X'
+            }));
+            
+            rikResults = [...historyData].reverse();
+            
+            // CHỈ khởi tạo AI nếu API đã được gọi
+            if (isApiActive) {
+                console.log('🎯 Khởi tạo AI với dữ liệu lịch sử...');
+                ai.initializeFromHistory(historyData);
+            } else {
+                console.log('⏳ Dữ liệu đã sẵn sàng - Đợi API được gọi để bắt đầu xử lý...');
+            }
+        }
 
-                if (results.length === 0) {
-                     console.log(`📊 Đã nhận ${newHistory.length} dòng lịch sử.`);
-                     ai.loadHistory(newHistory);
-                     results = newHistory.slice(-100).reverse();
-                     // Dự đoán ngay cho phiên tiếp theo
-                     if(results[0]) ai.savePredictionForNextSession(results[0].session);
+        // XỬ LÝ KẾT QUẢ MỚI (REALTIME)
+        else if (json.session && json.dice) {
+            const total = json.dice.reduce((a, b) => a + b, 0);
+            const record = {
+                session: json.session,
+                dice: json.dice,
+                total: total,
+                result: total >= 11 ? 'Tai' : 'Xiu',
+                tx: total >= 11 ? 'T' : 'X'
+            };
+
+            if (!rikResults.some(r => r.session === record.session)) {
+                rikResults.unshift(record);
+                if (rikResults.length > 100) rikResults.pop();
+                
+                // CHỈ cập nhật AI nếu API đang active
+                if (isApiActive) {
+                    ai.addResult(record);
+                    
+                    const pred = ai.predict();
+                    console.log(`🎰 Phiên ${record.session}: ${record.result} (${record.dice.join('-')}) | Tiếp theo: ${pred.prediction.toUpperCase()} [${pred.confidence}%] | Tỷ lệ: ${ai.getRate()}`);
+                } else {
+                    console.log(`📊 Phiên ${record.session}: ${record.result} (${record.dice.join('-')}) - Chưa xử lý (đợi API)`);
                 }
             }
-        } catch (e) {}
+        }
     });
 
+    rikWS.on("error", (err) => {
+        console.error("❌ WebSocket Error:", err.message);
+    });
+    
     rikWS.on("close", () => {
-        setTimeout(connectRikWebSocket, 3000);
+        console.log("🔌 WebSocket Closed - Reconnecting in 3s...");
+        reconnectAttempts++;
+        setTimeout(connectWebSocket, 3000);
     });
 }
 
-connectRikWebSocket();
+// --- START SERVER ---
+const start = async () => {
+    try {
+        await app.listen({ port: PORT, host: '0.0.0.0' });
+        console.log(`
+╔═══════════════════════════════════════════════════════╗
+║     🚀 SUNWIN AI PRO - ADVANCED PREDICTION SYSTEM     ║
+╠═══════════════════════════════════════════════════════╣
+║  Server: http://localhost:${PORT}                        ║
+║  Endpoint: http://localhost:${PORT}/sunwinsew            ║
+║  Status: ⏳ Standby Mode                              ║
+║  Note: AI sẽ bắt đầu xử lý khi API được gọi lần đầu   ║
+╚═══════════════════════════════════════════════════════╝
+        `);
+        
+        console.log('📡 Kết nối WebSocket...');
+        connectWebSocket();
+        
+    } catch (err) {
+        console.error('❌ Lỗi khởi động server:', err);
+        process.exit(1);
+    }
+};
+
+start();
