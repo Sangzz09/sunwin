@@ -971,9 +971,9 @@ const start = async () => {
             port: PORT,
             host: "0.0.0.0"
         });
-        console.log(`\n==============================================`);
-        console.log(`🚀 SEW PROPRO Sunwin AI ULTRA Server``;
-        console.log(`==============================================`);
+        974  console.log(`====================================`);
+        975  console.log(`🚀 SEW PROPRO Sunwin AI ULTRA Server`);
+        976  console.log(`====================================`);
         console.log(`   Port: ${PORT}`);
         console.log(`   Thuật toán: ${ALGORITHMS.length} AI Algorithms`);
         console.log(`   Pattern Database: ${Object.keys(PATTERN_DATABASE).length} mẫu`);
