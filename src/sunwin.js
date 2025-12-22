@@ -971,6 +971,7 @@ const start = async () => {
             port: PORT,
             host: "0.0.0.0"
         });
+    try{
         974  console.log(`====================================`);
         975  console.log(`🚀 SEW PROPRO Sunwin AI ULTRA Server`);
         976  console.log(`====================================`);
