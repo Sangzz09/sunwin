@@ -5,10 +5,9 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // --- CẤU HÌNH ---
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const WS_URL = "wss://websocket.azhkthg1.net/websocket?token=";
 const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJzYW5nZGVwemFpMDlubyIsImJvdCI6MCwiaXNNZXJjaGFudCI6ZmFsc2UsInZlcmlmaWVkQmFua0FjY291bnQiOnRydWUsInBsYXlFdmVudExvYmJ5IjpmYWxzZSwiY3VzdG9tZXJJZCI6MjIxNjQwNjcyLCJhZmZJZCI6IlN1bndpbiIsImJhbm5lZCI6ZmFsc2UsImJyYW5kIjoic3VuLndpbiIsInRpbWVzdGFtcCI6MTc2NjQwMjkzODEwNCwibG9ja0dhbWVzIjpbXSwiYW1vdW50IjowLCJsb2NrQ2hhdCI6ZmFsc2UsInBob25lVmVyaWZpZWQiOnRydWUsImlwQWRkcmVzcyI6IjExMy4xNzQuNzguMjU1IiwibXV0ZSI6ZmFsc2UsImF2YXRhciI6Imh0dHBzOi8vaW1hZ2VzLnN3aW5zaG9wLm5ldC9pbWFnZXMvYXZhdGFyL2F2YXRhcl8xNS5wbmciLCJwbGF0Zm9ybUlkIjo0LCJ1c2VySWQiOiI3ODRmNGU0Mi1iZWExLTRiZTUtYjgwNS03MmJlZjY5N2UwMTIiLCJyZWdUaW1lIjoxNzQyMjMyMzQ1MTkxLCJwaG9uZSI6Ijg0ODg2MDI3NzY3IiwiZGVwb3NpdCI6dHJ1ZSwidXNlcm5hbWUiOiJTQ19tc2FuZ3p6MDkifQ.Y4Dh3hSBO-HoKsSiSJiIjNZMEyahCISyY2h_Fx2UY3w";
-
 
 // --- GLOBAL STATE ---
 let rikResults = [];
@@ -22,7 +21,7 @@ const __dirname = path.dirname(__filename);
 // --- PATTERN DATABASE ĐẦY ĐỦ ---
 const PATTERN_DATABASE = {
     // Cầu cơ bản (đơn giản)
-    '1-1': ['tx', 'xt'],  // thay đổi sang chữ thường
+    '1-1': ['tx', 'xt'],
     'bệt': ['tt', 'xx'],
     '2-2': ['ttxx', 'xxtt'],
     '3-3': ['tttxxx', 'xxxttt'],
@@ -65,11 +64,11 @@ const PATTERN_DATABASE = {
     '2-3-3': ['ttxxttt', 'xxttxxx'],
     
     // Cầu Fibonacci
-    'fibonacci_1': ['t', 'x'],  // 1
-    'fibonacci_2': ['tx', 'xt'],  // 1,1
-    'fibonacci_3': ['txt', 'xtx'],  // 1,1,2
-    'fibonacci_4': ['txttx', 'xtxxt'],  // 1,1,2,3
-    'fibonacci_5': ['txttxttx', 'xtxtxxxt'],  // 1,1,2,3,5
+    'fibonacci_1': ['t', 'x'],
+    'fibonacci_2': ['tx', 'xt'],
+    'fibonacci_3': ['txt', 'xtx'],
+    'fibonacci_4': ['txttx', 'xtxxt'],
+    'fibonacci_5': ['txttxttx', 'xtxtxxxt'],
     
     // Cầu hình học
     'triangle': ['txx', 'xtt'],
@@ -161,34 +160,25 @@ function parseLines(lines) {
 
 // --- THUẬT TOÁN AI TỐI ƯU CAO CẤP ---
 
-/**
- * 1. ULTRA PATTERN RECOGNITION với Deep Learning
- * Nhận diện 100+ mẫu cầu và thích nghi thời gian thực
- */
 function algo1_ultraPatternRecognition(history) {
     const tx = history.map(h => h.tx);
     if (tx.length < 30) return null;
 
-    // Chuyển sang chữ thường để so sánh
     const txLower = tx.map(t => t.toLowerCase());
-    const recentPattern = txLower.slice(-8).join('');
     const fullPattern = txLower.join('');
     
     let patternMatches = { t: 0, x: 0 };
     let totalWeight = 0;
     
-    // Quét toàn bộ pattern database
     Object.entries(PATTERN_DATABASE).forEach(([patternName, patternList]) => {
         patternList.forEach(pattern => {
             const patternLength = pattern.length;
-            if (patternLength > 8) return; // Giới hạn độ dài pattern
+            if (patternLength > 8) return;
             
-            // Tìm pattern trong lịch sử
             for (let i = 0; i <= fullPattern.length - patternLength - 1; i++) {
                 if (fullPattern.substr(i, patternLength) === pattern) {
                     const nextChar = fullPattern.charAt(i + patternLength);
                     if (nextChar === 't' || nextChar === 'x') {
-                        // Trọng số theo độ dài và độ phức tạp
                         const weight = (patternLength / 8) * (patternName.includes('complex') ? 1.5 : 1);
                         patternMatches[nextChar] += weight;
                         totalWeight += weight;
@@ -200,8 +190,7 @@ function algo1_ultraPatternRecognition(history) {
     
     if (totalWeight === 0) return null;
     
-    // Tính xác suất với ngưỡng thích nghi
-    const threshold = 0.65 + (Math.min(totalWeight, 50) / 100); // Ngưỡng động
+    const threshold = 0.65 + (Math.min(totalWeight, 50) / 100);
     const tProb = patternMatches.t / totalWeight;
     const xProb = patternMatches.x / totalWeight;
     
@@ -211,25 +200,20 @@ function algo1_ultraPatternRecognition(history) {
     return null;
 }
 
-/**
- * 2. QUANTUM ADAPTIVE AI - Học máy lượng tử
- */
 function algo2_quantumAdaptiveAI(history) {
     if (history.length < 40) return null;
     
     const tx = history.map(h => h.tx);
     const totals = history.map(h => h.total);
     
-    // Trạng thái lượng tử
     const quantumState = {
         t: 0.5,
         x: 0.5
     };
     
-    // Học từ lịch sử gần đây (20 phiên)
     const recentCount = Math.min(20, history.length);
     for (let i = history.length - recentCount; i < history.length; i++) {
-        const weight = 0.04; // Learning rate
+        const weight = 0.04;
         if (tx[i] === 'T') {
             quantumState.t = quantumState.t * (1 + weight);
             quantumState.x = quantumState.x * (1 - weight);
@@ -239,7 +223,6 @@ function algo2_quantumAdaptiveAI(history) {
         }
     }
     
-    // Điều chỉnh theo điểm số
     const recentAvg = totals.slice(-10).reduce((a, b) => a + b, 0) / 10;
     if (recentAvg > 11.2) {
         quantumState.t *= 0.85;
@@ -249,12 +232,10 @@ function algo2_quantumAdaptiveAI(history) {
         quantumState.x *= 0.85;
     }
     
-    // Chuẩn hóa
     const total = quantumState.t + quantumState.x;
     quantumState.t /= total;
     quantumState.x /= total;
     
-    // Ngưỡng quyết định
     const decisionThreshold = 0.68;
     if (quantumState.t > decisionThreshold) return 'T';
     if (quantumState.x > decisionThreshold) return 'X';
@@ -262,16 +243,12 @@ function algo2_quantumAdaptiveAI(history) {
     return null;
 }
 
-/**
- * 3. DEEP TREND ANALYSIS - Phân tích xu hướng sâu
- */
 function algo3_deepTrendAnalysis(history) {
     if (history.length < 25) return null;
     
     const tx = history.map(h => h.tx);
     const totals = history.map(h => h.total);
     
-    // Phân tích nhiều khung thời gian
     const periods = [5, 10, 15, 20];
     const trends = { t: 0, x: 0 };
     
@@ -286,23 +263,18 @@ function algo3_deepTrendAnalysis(history) {
         }
     });
     
-    // Phân tích điểm số
     const totalAvg = totals.reduce((a, b) => a + b, 0) / totals.length;
     const recentAvg = totals.slice(-8).reduce((a, b) => a + b, 0) / 8;
     
     if (recentAvg > totalAvg + 0.8) trends.t += 1.5;
     if (recentAvg < totalAvg - 0.8) trends.x += 1.5;
     
-    // Quyết định
     if (trends.t > trends.x + 1.5) return 'T';
     if (trends.x > trends.t + 1.5) return 'X';
     
     return null;
 }
 
-/**
- * 4. SMART BRIDGE DETECTION - Phát hiện cầu thông minh
- */
 function algo4_smartBridgeDetection(history) {
     const tx = history.map(h => h.tx);
     if (tx.length < 15) return null;
@@ -310,16 +282,13 @@ function algo4_smartBridgeDetection(history) {
     const recentTx = tx.slice(-15);
     const lastResult = recentTx[recentTx.length - 1];
     
-    // Phân tích độ dài cầu hiện tại
     let runLength = 1;
     for (let i = recentTx.length - 2; i >= 0; i--) {
         if (recentTx[i] === lastResult) runLength++;
         else break;
     }
     
-    // AI THEO CẦU THÔNG MINH
     if (runLength >= 2 && runLength <= 4) {
-        // Kiểm tra xem có đang trong pattern mạnh không
         const patternStr = recentTx.slice(-8).join('').toLowerCase();
         const strongPatterns = ['tttt', 'xxxx', 'txtxtx', 'xtxtxt'];
         
@@ -329,23 +298,19 @@ function algo4_smartBridgeDetection(history) {
         });
         
         if (inStrongPattern) {
-            return lastResult; // Tiếp tục theo cầu mạnh
+            return lastResult;
         }
         
-        // Kiểm tra xu hướng tổng thể
         const overallTrend = calculateOverallTrend(tx);
         if (overallTrend === lastResult) {
-            return lastResult; // Theo xu hướng tổng thể
+            return lastResult;
         }
     }
     
-    // AI BẺ CẦU THÔNG MINH
     if (runLength >= 5) {
-        // Bẻ cầu khi quá dài
         return lastResult === 'T' ? 'X' : 'T';
     }
     
-    // Phát hiện pattern đảo chiều
     const lastPattern = recentTx.slice(-6).join('').toLowerCase();
     const reversalPatterns = ['tttxxx', 'xxxttt', 'ttxx', 'xxtt', 'txtxtx', 'xtxtxt'];
     
@@ -356,9 +321,6 @@ function algo4_smartBridgeDetection(history) {
     return null;
 }
 
-/**
- * 5. VOLATILITY PREDICTION - Dự đoán biến động
- */
 function algo5_volatilityPrediction(history) {
     if (history.length < 30) return null;
     
@@ -366,18 +328,14 @@ function algo5_volatilityPrediction(history) {
     const recent10 = totals.slice(-10);
     const recent20 = totals.slice(-20);
     
-    // Tính biến động
     const vol10 = calculateVolatility(recent10);
     const vol20 = calculateVolatility(recent20);
     
-    // Phân tích xu hướng biến động
     if (vol10 > vol20 * 1.5) {
-        // Biến động tăng -> dự đoán hồi quy
         const avgRecent = recent10.reduce((a, b) => a + b, 0) / 10;
         if (avgRecent > 11.0) return 'X';
         if (avgRecent < 10.0) return 'T';
     } else if (vol10 < vol20 * 0.7) {
-        // Biến động giảm -> tiếp tục xu hướng
         const recentTx = history.slice(-10).map(h => h.tx);
         const tCount = recentTx.filter(t => t === 'T').length;
         const xCount = recentTx.filter(t => t === 'X').length;
@@ -389,9 +347,6 @@ function algo5_volatilityPrediction(history) {
     return null;
 }
 
-/**
- * 6. PATTERN FUSION AI - Kết hợp đa mẫu
- */
 function algo6_patternFusionAI(history) {
     const tx = history.map(h => h.tx);
     if (tx.length < 35) return null;
@@ -399,7 +354,6 @@ function algo6_patternFusionAI(history) {
     const txLower = tx.map(t => t.toLowerCase());
     const patterns = [];
     
-    // Phát hiện nhiều loại pattern cùng lúc
     const patternTypes = [
         { name: 'basic', length: 3, weight: 0.3 },
         { name: 'advanced', length: 5, weight: 0.5 },
@@ -434,7 +388,6 @@ function algo6_patternFusionAI(history) {
     
     if (patterns.length === 0) return null;
     
-    // Kết hợp các dự đoán
     const combined = { t: 0, x: 0 };
     patterns.forEach(p => {
         if (p.prediction === 'T') combined.t += p.confidence;
@@ -447,16 +400,12 @@ function algo6_patternFusionAI(history) {
     return null;
 }
 
-/**
- * 7. REAL-TIME ADAPTIVE AI - AI thích nghi thời gian thực
- */
 function algo7_realtimeAdaptiveAI(history) {
     if (history.length < 20) return null;
     
     const tx = history.map(h => h.tx);
     const totals = history.map(h => h.total);
     
-    // Tính toán đa chỉ số
     const indicators = {
         rsi: calculateRSI(tx.slice(-14)),
         macd: calculateMACD(totals),
@@ -467,23 +416,18 @@ function algo7_realtimeAdaptiveAI(history) {
     let tScore = 0;
     let xScore = 0;
     
-    // Đánh giá RSI
     if (indicators.rsi > 70) xScore += 1.5;
     else if (indicators.rsi < 30) tScore += 1.5;
     
-    // Đánh giá MACD
     if (indicators.macd > 0.5) tScore += 1;
     else if (indicators.macd < -0.5) xScore += 1;
     
-    // Đánh giá Bias
     if (indicators.bias > 0.6) tScore += 1.2;
     else if (indicators.bias < 0.4) xScore += 1.2;
     
-    // Đánh giá Momentum
     if (indicators.momentum > 0.3) tScore += 0.8;
     else if (indicators.momentum < -0.3) xScore += 0.8;
     
-    // Quyết định
     if (tScore > xScore + 1.5) return 'T';
     if (xScore > tScore + 1.5) return 'X';
     
@@ -652,7 +596,6 @@ class AdvancedDeepLearningAI {
         const winningVotes = Math.max(tVotes, xVotes);
         let confidence = winningVotes / totalWeight;
         
-        // Điều chỉnh confidence dựa trên số thuật toán đồng thuận
         const consensus = predictions.filter(p => 
             p.prediction === winningPrediction).length / predictions.length;
         
@@ -793,7 +736,6 @@ class AdvancedDeepLearningAI {
     getPattern() {
         if (this.history.length < 50) return { recent: 'đang thu thập...', long: 'đang thu thập...' };
         const tx = this.history.map(h => h.tx);
-        // Chuyển sang chữ thường
         const recent = tx.slice(-20).join('').toLowerCase();
         const long = tx.slice(-50).join('').toLowerCase();
         
@@ -883,7 +825,7 @@ app.get("/api/taixiu/sunwin", async (request, reply) => {
         }
 
         return {
-            id: "@MINHSANGDANGCAPMINHSANGDANGCAP",
+            id: "@MINHSANGDANGCAP",
             phien_truoc: lastResult.session,
             xuc_xac: lastResult.dice,
             tong: lastResult.total,
@@ -898,7 +840,7 @@ app.get("/api/taixiu/sunwin", async (request, reply) => {
     } catch (error) {
         console.error('Lỗi API /api/taixiu/sunwin:', error);
         return {
-            id: "@MINHSANGDANGCAPMINHSANGDANGCAP",
+            id: "@MINHSANGDANGCAP",
             error: "Hệ thống đang xử lý lỗi hoặc chưa đủ dữ liệu."
         };
     }
@@ -971,10 +913,10 @@ const start = async () => {
             port: PORT,
             host: "0.0.0.0"
         });
-    try{
-        974  console.log(`====================================`);
-        975  console.log(`🚀 SEW PROPRO Sunwin AI ULTRA Server`);
-        976  console.log(`====================================`);
+        
+        console.log(`====================================`);
+        console.log(`🚀 SEW PROPRO Sunwin AI ULTRA Server`);
+        console.log(`====================================`);
         console.log(`   Port: ${PORT}`);
         console.log(`   Thuật toán: ${ALGORITHMS.length} AI Algorithms`);
         console.log(`   Pattern Database: ${Object.keys(PATTERN_DATABASE).length} mẫu`);
@@ -1022,9 +964,9 @@ function connectRikWebSocket() {
     try {
         rikWS = new WebSocket(`${WS_URL}${TOKEN}`);
     } catch (e) {
-         console.error("Lỗi tạo WebSocket:", e.message);
-         setTimeout(connectRikWebSocket, 5000);
-         return;
+        console.error("Lỗi tạo WebSocket:", e.message);
+        setTimeout(connectRikWebSocket, 5000);
+        return;
     }
 
     rikWS.on("open", () => {
@@ -1044,9 +986,9 @@ function connectRikWebSocket() {
         }];
         
         try {
-             rikWS.send(JSON.stringify(authPayload));
+            rikWS.send(JSON.stringify(authPayload));
         } catch (e) {
-             console.error("Lỗi gửi xác thực:", e.message);
+            console.error("Lỗi gửi xác thực:", e.message);
         }
        
         rikIntervalCmd = setInterval(sendRikCmd1005, 5000);
@@ -1135,4 +1077,5 @@ start().then(() => {
     connectRikWebSocket();
 }).catch(err => {
     console.error('Failed to start application:', err);
+    process.exit(1);
 });
