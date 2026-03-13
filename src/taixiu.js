@@ -1,5 +1,6 @@
 const WebSocket = require('ws');
 const express = require('express');
+const { encode, decode } = require('@msgpack/msgpack');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -7,157 +8,121 @@ const wsUrl = 'wss://websocket.azhkthg1.net/wsbinary?token=eyJ0eXAiOiJKV1QiLCJhb
 
 // ===================== STORAGE =====================
 const MAX_HISTORY = 200;
-
 let lichSu = [];
 let phienHienTai = null;
 let ketQuaMoiNhat = null;
-
 let ws = null;
 let reconnectTimeout = null;
 let reconnectAttempts = 0;
-
-// Debug: lưu 20 message raw gần nhất
 const debugMessages = [];
+
 function pushDebug(entry) {
   debugMessages.unshift(entry);
-  if (debugMessages.length > 20) debugMessages.pop();
+  if (debugMessages.length > 30) debugMessages.pop();
 }
 
-// ===================== PARSE HELPERS =====================
-
-/**
- * Xác định Tài/Xỉu từ tổng điểm 3 xúc xắc
- * Tài: tổng >= 11, Xỉu: tổng <= 10
- */
+// ===================== HELPERS =====================
 function getTaiXiu(tong) {
-  if (tong === null || tong === undefined) return null;
-  return tong >= 11 ? 'Tài' : 'Xỉu';
+  if (tong == null) return null;
+  return tong >= 11 ? 'Tai' : 'Xiu';
 }
-
-/**
- * Xác định Chẵn/Lẻ từ tổng điểm
- */
 function getChanLe(tong) {
-  if (tong === null || tong === undefined) return null;
-  return tong % 2 === 0 ? 'Chẵn' : 'Lẻ';
+  if (tong == null) return null;
+  return tong % 2 === 0 ? 'Chan' : 'Le';
 }
 
-/**
- * Parse message từ WebSocket — thử nhiều format
- */
-function parseMessage(data) {
-  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  const hex = buf.toString('hex');
-  const utf8 = buf.toString('utf8');
-  const printable = utf8.replace(/[^\x20-\x7E]/g, '.');
-
-  // Log debug mọi message
-  pushDebug({
-    time: new Date().toISOString(),
-    byteLen: buf.length,
-    hex: hex.slice(0, 300),
-    utf8_printable: printable.slice(0, 300)
-  });
-  console.log(`📦 [MSG ${buf.length}B] hex: ${hex.slice(0,60)} | txt: ${printable.slice(0,80)}`);
-
-  // 1. Thử parse JSON thẳng
-  try {
-    return { type: 'json', data: JSON.parse(utf8) };
-  } catch {}
-
-  // 2. Tìm JSON object trong chuỗi binary (bỏ byte header)
-  for (let i = 0; i < Math.min(buf.length, 20); i++) {
-    if (buf[i] === 0x7b) { // '{'
-      try {
-        return { type: 'json_offset', offset: i, data: JSON.parse(buf.slice(i).toString('utf8')) };
-      } catch {}
-    }
-  }
-
-  // 3. Thử tìm JSON array
-  for (let i = 0; i < Math.min(buf.length, 20); i++) {
-    if (buf[i] === 0x5b) { // '['
-      try {
-        return { type: 'json_array', offset: i, data: JSON.parse(buf.slice(i).toString('utf8')) };
-      } catch {}
-    }
-  }
-
-  // 4. Không parse được — trả raw để debug
-  return { type: 'binary_unknown', hex: hex.slice(0, 400), utf8: printable.slice(0, 400) };
+function themLichSu(record) {
+  if (record.phien && lichSu.some(r => r.phien == record.phien)) return;
+  lichSu.unshift(record);
+  if (lichSu.length > MAX_HISTORY) lichSu.pop();
+  ketQuaMoiNhat = record;
+  console.log(`Phien ${record.phien} | Xuc xac: ${record.x1}-${record.x2}-${record.x3} | Tong: ${record.tong} | ${record.taiXiu} ${record.chanLe}`);
 }
 
-/**
- * Trích xuất thông tin Tài Xỉu từ JSON đã parse
- * Hỗ trợ nhiều format khác nhau của Sun.win
- */
-function extractTaiXiuData(json) {
-  if (!json || typeof json !== 'object') return null;
+// ===================== PARSE MSGPACK =====================
+function handleDecoded(obj, raw) {
+  const str = JSON.stringify(obj);
+  pushDebug({ time: new Date().toISOString(), decoded: str.slice(0, 400), raw });
+  console.log('MSG decoded:', str.slice(0, 200));
 
-  // Format 1: { type, data: { phien, xucXac1, xucXac2, xucXac3, tong } }
-  if (json.data) {
-    const d = json.data;
-    const phien = d.phien || d.sessionId || d.gameId || d.id || d.roundId;
-    const x1 = d.xucXac1 ?? d.dice1 ?? d.d1 ?? d.dice?.[0];
-    const x2 = d.xucXac2 ?? d.dice2 ?? d.d2 ?? d.dice?.[1];
-    const x3 = d.xucXac3 ?? d.dice3 ?? d.d3 ?? d.dice?.[2];
-    const tong = d.tong ?? d.total ?? d.sum ?? (x1 && x2 && x3 ? x1 + x2 + x3 : null);
+  // obj thường là array: [type, data, ...]
+  // Dựa vào type (số hoặc string) để xử lý
+  if (Array.isArray(obj)) {
+    const [type, data] = obj;
 
-    if (tong !== null && tong !== undefined) {
-      return { phien, x1, x2, x3, tong };
+    // Type 1 hoặc 'result' = kết quả
+    // Thử tìm dice values trong data
+    tryExtract(type, data, obj);
+  } else if (typeof obj === 'object') {
+    tryExtract(null, obj, obj);
+  }
+}
+
+function tryExtract(type, data, full) {
+  if (!data && data !== 0) return;
+
+  // Nếu data là array (nested msgpack array)
+  if (Array.isArray(data)) {
+    // Thử tìm 3 số liên tiếp trong range 1-6 (xúc xắc)
+    const found = findDice(data);
+    if (found) {
+      const { x1, x2, x3, phien } = found;
+      const tong = x1 + x2 + x3;
+      themLichSu({ phien, x1, x2, x3, tong, taiXiu: getTaiXiu(tong), chanLe: getChanLe(tong), thoiGian: new Date().toISOString() });
+    }
+    return;
+  }
+
+  if (typeof data === 'object' && data !== null) {
+    // Tìm các field phổ biến
+    const x1 = data.d1 ?? data.dice1 ?? data.xucXac1 ?? data[1];
+    const x2 = data.d2 ?? data.dice2 ?? data.xucXac2 ?? data[2];
+    const x3 = data.d3 ?? data.dice3 ?? data.xucXac3 ?? data[3];
+    const tong = data.total ?? data.tong ?? data.sum ?? (x1 && x2 && x3 ? x1+x2+x3 : null);
+    const phien = data.sessionId ?? data.phien ?? data.id ?? data.roundId ?? phienHienTai;
+
+    if (tong != null && tong >= 3 && tong <= 18) {
+      themLichSu({ phien, x1, x2, x3, tong, taiXiu: getTaiXiu(tong), chanLe: getChanLe(tong), thoiGian: new Date().toISOString() });
     }
   }
+}
 
-  // Format 2: flat object { sessionId, dice1, dice2, dice3, total }
-  const phien = json.phien || json.sessionId || json.gameId || json.roundId || json.id;
-  const x1 = json.xucXac1 ?? json.dice1 ?? json.d1 ?? json.dice?.[0];
-  const x2 = json.xucXac2 ?? json.dice2 ?? json.d2 ?? json.dice?.[1];
-  const x3 = json.xucXac3 ?? json.dice3 ?? json.d3 ?? json.dice?.[2];
-  const tong = json.tong ?? json.total ?? json.sum ?? (x1 && x2 && x3 ? x1 + x2 + x3 : null);
-
-  if (tong !== null && tong !== undefined) {
-    return { phien, x1, x2, x3, tong };
+function findDice(arr) {
+  // Tìm 3 số liên tiếp trong 1-6
+  for (let i = 0; i < arr.length - 2; i++) {
+    const a = arr[i], b = arr[i+1], c = arr[i+2];
+    if (Number.isInteger(a) && Number.isInteger(b) && Number.isInteger(c) &&
+        a >= 1 && a <= 6 && b >= 1 && b <= 6 && c >= 1 && c <= 6) {
+      return { x1: a, x2: b, x3: c, phien: arr[0] ?? phienHienTai };
+    }
   }
-
-  // Format 3: mảng kết quả lịch sử { results: [...] }
-  const arr = json.results || json.history || json.list;
-  if (Array.isArray(arr) && arr.length > 0) {
-    return { isHistory: true, arr };
+  // Đệ quy tìm trong nested arrays
+  for (const item of arr) {
+    if (Array.isArray(item)) {
+      const found = findDice(item);
+      if (found) return found;
+    }
   }
-
   return null;
 }
 
-/**
- * Thêm kết quả mới vào lịch sử
- */
-function themLichSu(record) {
-  // Tránh duplicate theo phien
-  if (record.phien && lichSu.some(r => r.phien === record.phien)) return;
-
-  lichSu.unshift(record); // Mới nhất lên đầu
-  if (lichSu.length > MAX_HISTORY) lichSu.pop();
-  ketQuaMoiNhat = record;
-
-  console.log(`✅ Phiên ${record.phien || '?'} | Xúc xắc: ${record.x1}-${record.x2}-${record.x3} | Tổng: ${record.tong} | ${record.taiXiu} ${record.chanLe}`);
+// ===================== WEBSOCKET =====================
+function sendMsg(payload) {
+  if (!ws || ws.readyState !== 1) return;
+  try {
+    const buf = Buffer.from(encode(payload));
+    ws.send(buf);
+    console.log('Sent msgpack:', JSON.stringify(payload));
+  } catch(e) {
+    console.error('Send error:', e.message);
+  }
 }
 
-// ===================== WEBSOCKET =====================
-
 function connect() {
-  if (reconnectAttempts > 0) {
-    console.error(`🔄 Reconnecting (lần ${reconnectAttempts})...`);
-  }
+  if (reconnectAttempts > 0) console.error(`Reconnecting (lan ${reconnectAttempts})...`);
 
-  if (ws) {
-    ws.removeAllListeners();
-    try { ws.close(); } catch {}
-  }
-
-  if (reconnectTimeout) {
-    clearTimeout(reconnectTimeout);
-    reconnectTimeout = null;
-  }
+  if (ws) { ws.removeAllListeners(); try { ws.close(); } catch {} }
+  if (reconnectTimeout) { clearTimeout(reconnectTimeout); reconnectTimeout = null; }
 
   ws = new WebSocket(wsUrl, {
     headers: {
@@ -169,136 +134,80 @@ function connect() {
   });
 
   ws.on('open', () => {
-    console.log('✅ WebSocket connected!');
+    console.log('WebSocket connected!');
     reconnectAttempts = 0;
 
-    // Sun.win WS yêu cầu gửi subscribe message trước khi nhận data
-    // Thử nhiều format JSON phổ biến
-    const jsonMsgs = [
-      { type: 'subscribe', game: 'taixiu' },
-      { type: 'join', gameId: 'taixiu' },
-      { action: 'subscribe', channel: 'taixiu' },
-      { cmd: 'join', room: 'taixiu' },
-      { type: 'getHistory', gameType: 1 },
-      { t: 'join', game: 'taixiu' },
-      { t: 'subscribe' },
-      { type: 'ping' },
-    ];
-
-    jsonMsgs.forEach((msg, i) => {
-      setTimeout(() => {
-        if (ws && ws.readyState === 1) {
-          const str = JSON.stringify(msg);
-          console.log(`📤 Gửi JSON [${i}]:`, str);
-          try { ws.send(str); } catch {}
-        }
-      }, 300 + i * 400);
-    });
-
-    // Gửi thêm binary byte handshake (phổ biến trong gaming protocol)
+    // Gửi subscribe bằng MessagePack (đúng format server yêu cầu)
     setTimeout(() => {
-      [0x00, 0x01, 0x02, 0x03].forEach((byte, i) => {
-        setTimeout(() => {
-          if (ws && ws.readyState === 1) {
-            try {
-              ws.send(Buffer.from([byte]));
-              console.log(`📤 Gửi binary byte: 0x0${byte}`);
-            } catch {}
-          }
-        }, i * 200);
-      });
-    }, 4000);
+      // Format array phổ biến của Sun.win: [type, data]
+      // type thường là số nguyên
+      sendMsg([1, { game: 'taixiu' }]);
+      sendMsg([2, { game: 'taixiu' }]);
+      sendMsg([3, 'taixiu']);
+      sendMsg([10, {}]);
+      sendMsg([11, {}]);
+      // Format Sun.win dùng số + gameId
+      sendMsg([1, 1]);
+      sendMsg([2, 1]);
+      sendMsg([5, 1]);
+      // Heartbeat/join
+      sendMsg([0]);
+      sendMsg([1]);
+    }, 500);
   });
 
   ws.on('message', (data) => {
     try {
-      const parsed = parseMessage(data);
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const hex = buf.toString('hex');
 
-      if (parsed.type === 'binary_unknown') {
-        console.log('🔍 Chưa decode được — xem /debug để biết format');
+      // Chỉ log 4 bytes đầu để không spam
+      console.log(`MSG ${buf.length}B hex_start: ${hex.slice(0,16)}`);
+
+      // Skip heartbeat 4 bytes
+      if (buf.length <= 4) {
+        pushDebug({ time: new Date().toISOString(), type: 'heartbeat', hex });
         return;
       }
 
-      const json = parsed.data;
-
-      // --- Lấy phiên hiện tại (đang chờ kết quả) ---
-      if (json.type === 'newSession' || json.type === 'new_session' || json.type === 'session') {
-        phienHienTai = json.data?.phien || json.data?.sessionId || json.sessionId || json.phien;
-        console.log(`🎲 Phiên mới: ${phienHienTai}`);
+      // Decode msgpack
+      try {
+        const decoded = decode(buf);
+        handleDecoded(decoded, hex.slice(0, 100));
         return;
+      } catch {}
+
+      // Fallback: skip 1-4 byte header rồi decode
+      for (let skip = 1; skip <= 6; skip++) {
+        try {
+          const decoded = decode(buf.slice(skip));
+          console.log(`Decoded with skip=${skip}`);
+          handleDecoded(decoded, hex.slice(0, 100));
+          return;
+        } catch {}
       }
 
-      // --- Lấy kết quả ---
-      if (json.type === 'result' || json.type === 'gameResult' || json.type === 'game_result' ||
-          json.type === 'end' || json.type === 'endGame' || json.type === 'end_game') {
-        const info = extractTaiXiuData(json);
-        if (info && !info.isHistory) {
-          themLichSu({
-            phien:    info.phien || phienHienTai,
-            x1:       info.x1,
-            x2:       info.x2,
-            x3:       info.x3,
-            tong:     info.tong,
-            taiXiu:   getTaiXiu(info.tong),
-            chanLe:   getChanLe(info.tong),
-            thoiGian: new Date().toISOString()
-          });
-        }
+      // Fallback JSON
+      try {
+        const json = JSON.parse(buf.toString('utf8'));
+        handleDecoded(json, hex.slice(0, 100));
         return;
-      }
+      } catch {}
 
-      // --- Nhận lịch sử từ server (thường gửi khi mới connect) ---
-      if (json.type === 'history' || json.type === 'histories' || json.type === 'getHistory') {
-        const info = extractTaiXiuData(json);
-        if (info?.isHistory) {
-          console.log(`📜 Nhận ${info.arr.length} phiên lịch sử từ server`);
-          for (const item of [...info.arr].reverse()) {
-            const x1 = item.xucXac1 ?? item.dice1 ?? item.d1 ?? item.dice?.[0];
-            const x2 = item.xucXac2 ?? item.dice2 ?? item.d2 ?? item.dice?.[1];
-            const x3 = item.xucXac3 ?? item.dice3 ?? item.d3 ?? item.dice?.[2];
-            const tong = item.tong ?? item.total ?? item.sum ?? (x1 && x2 && x3 ? x1 + x2 + x3 : null);
-            if (tong !== null) {
-              themLichSu({
-                phien:    item.phien || item.sessionId || item.id,
-                x1, x2, x3, tong,
-                taiXiu:   getTaiXiu(tong),
-                chanLe:   getChanLe(tong),
-                thoiGian: item.thoiGian || item.time || item.createdAt || new Date().toISOString()
-              });
-            }
-          }
-        }
-        return;
-      }
-
-      // --- Fallback: thử extract trực tiếp nếu message chứa tổng ---
-      const info = extractTaiXiuData(json);
-      if (info && !info.isHistory && info.tong) {
-        themLichSu({
-          phien:    info.phien || phienHienTai,
-          x1:       info.x1,
-          x2:       info.x2,
-          x3:       info.x3,
-          tong:     info.tong,
-          taiXiu:   getTaiXiu(info.tong),
-          chanLe:   getChanLe(info.tong),
-          thoiGian: new Date().toISOString()
-        });
-      }
-
-    } catch (e) {
-      console.error('❌ Parse error:', e.message);
+      pushDebug({ time: new Date().toISOString(), type: 'unknown', hex: hex.slice(0, 200) });
+    } catch(e) {
+      console.error('Parse error:', e.message);
     }
   });
 
   ws.on('error', (err) => {
-    console.error('❌ WS Error:', err.message);
+    console.error('WS Error:', err.message);
     reconnectAttempts++;
     scheduleReconnect();
   });
 
   ws.on('close', (code, reason) => {
-    console.warn(`⚠️  WS Closed: ${code} ${reason}`);
+    console.warn(`WS Closed: ${code} ${reason}`);
     reconnectAttempts++;
     scheduleReconnect();
   });
@@ -306,157 +215,79 @@ function connect() {
 
 function scheduleReconnect() {
   if (reconnectTimeout) clearTimeout(reconnectTimeout);
-  const delay = Math.min(3000 * reconnectAttempts, 30000); // tối đa 30s
+  const delay = Math.min(3000 * reconnectAttempts, 30000);
   reconnectTimeout = setTimeout(connect, delay);
 }
 
 // ===================== API =====================
-
-// Debug — xem raw messages nhận được từ WS
 app.get('/debug', (req, res) => {
-  res.json({
-    wsStatus: ws ? (['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]) : 'null',
-    reconnectAttempts,
-    tongTinNhanGanNhat: debugMessages.length,
-    tinNhan: debugMessages
-  });
+  res.json({ wsStatus: ws ? (['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]) : 'null', reconnectAttempts, msgs: debugMessages });
 });
 
-// Kết quả mới nhất
 app.get('/api/taixiu/latest', (req, res) => {
-  res.json({
-    phienHienTai,
-    ketQuaMoiNhat,
-    tongPhienDaLuu: lichSu.length
-  });
+  res.json({ phienHienTai, ketQuaMoiNhat, tongPhienDaLuu: lichSu.length });
 });
 
-// Lịch sử cầu
 app.get('/api/taixiu/history', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 50, MAX_HISTORY);
   const history = lichSu.slice(0, limit);
-
-  // Thống kê chuỗi (cầu)
-  let cauTai = 0, cauXiu = 0, cauChan = 0, cauLe = 0;
+  let tai = 0, xiu = 0, chan = 0, le = 0;
   for (const r of history) {
-    if (r.taiXiu === 'Tài') cauTai++;
-    if (r.taiXiu === 'Xỉu') cauXiu++;
-    if (r.chanLe === 'Chẵn') cauChan++;
-    if (r.chanLe === 'Lẻ') cauLe++;
+    if (r.taiXiu === 'Tai') tai++;
+    if (r.taiXiu === 'Xiu') xiu++;
+    if (r.chanLe === 'Chan') chan++;
+    if (r.chanLe === 'Le') le++;
   }
-
-  // Chuỗi liên tiếp hiện tại
   let chuoiHienTai = 0;
   const loaiChuoi = history[0]?.taiXiu;
   for (const r of history) {
-    if (r.taiXiu === loaiChuoi) chuoiHienTai++;
-    else break;
+    if (r.taiXiu === loaiChuoi) chuoiHienTai++; else break;
   }
-
   res.json({
     tongPhien: lichSu.length,
     hienThi: history.length,
-    thongKe: {
-      tai: cauTai,
-      xiu: cauXiu,
-      chan: cauChan,
-      le: cauLe,
-      tiLeTai: history.length ? ((cauTai / history.length) * 100).toFixed(1) + '%' : '0%',
-      tiLeXiu: history.length ? ((cauXiu / history.length) * 100).toFixed(1) + '%' : '0%',
+    thongKe: { tai, xiu, chan, le,
+      tiLeTai: history.length ? ((tai/history.length)*100).toFixed(1)+'%' : '0%',
+      tiLeXiu: history.length ? ((xiu/history.length)*100).toFixed(1)+'%' : '0%'
     },
-    chuoiHienTai: {
-      loai: loaiChuoi || null,
-      soLuong: chuoiHienTai
-    },
+    chuoiHienTai: { loai: loaiChuoi || null, soLuong: chuoiHienTai },
     lichSu: history
   });
 });
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: ws && ws.readyState === 1 ? 'healthy' : 'unhealthy',
-    websocket: ws ? (['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] || 'unknown') : 'not_initialized',
+    websocket: ws ? (['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]) : 'not_initialized',
     reconnectAttempts,
     tongPhienDaLuu: lichSu.length,
-    ketQuaMoiNhat: ketQuaMoiNhat ? `${ketQuaMoiNhat.taiXiu} (${ketQuaMoiNhat.tong})` : 'chưa có',
-    debugUrl: '/debug — xem raw WS messages'
+    ketQuaMoiNhat: ketQuaMoiNhat ? `${ketQuaMoiNhat.taiXiu} (${ketQuaMoiNhat.tong})` : 'chua co'
   });
 });
 
-// Trang chủ
 app.get('/', (req, res) => {
   const wsStatus = ws && ws.readyState === 1;
-  const cau = lichSu.slice(0, 20).map(r => r.taiXiu === 'Tài' ? '🔴' : '🔵').join(' ');
-
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Tài Xỉu API - Sun.win</title>
-        <meta http-equiv="refresh" content="5">
-        <meta charset="utf-8">
-        <style>
-          body { font-family: Arial, sans-serif; margin: 40px; background: #0d1117; color: #e6edf3; }
-          h1 { color: #f0883e; }
-          .card { border: 1px solid #30363d; padding: 20px; margin: 10px 0; border-radius: 8px; background: #161b22; }
-          .ok { border-left: 4px solid #3fb950; }
-          .err { border-left: 4px solid #f85149; }
-          code { background: #21262d; padding: 2px 6px; border-radius: 4px; }
-          a { color: #58a6ff; }
-          .tai { color: #f85149; font-weight: bold; }
-          .xiu { color: #58a6ff; font-weight: bold; }
-          .cau { font-size: 22px; letter-spacing: 4px; }
-        </style>
-      </head>
-      <body>
-        <h1>🎲 Tài Xỉu API - Sun.win</h1>
-
-        <div class="card ${wsStatus ? 'ok' : 'err'}">
-          <h3>🔌 WebSocket</h3>
-          <p>${wsStatus ? '✅ Đang kết nối' : '❌ Mất kết nối'} &nbsp;|&nbsp; Reconnect: ${reconnectAttempts} lần</p>
-        </div>
-
-        <div class="card ok">
-          <h3>🎯 Kết quả mới nhất</h3>
-          ${ketQuaMoiNhat ? `
-            <p>Phiên: <strong>${ketQuaMoiNhat.phien || '?'}</strong></p>
-            <p>Xúc xắc: <strong>${ketQuaMoiNhat.x1} - ${ketQuaMoiNhat.x2} - ${ketQuaMoiNhat.x3}</strong> &nbsp;|&nbsp; Tổng: <strong>${ketQuaMoiNhat.tong}</strong></p>
-            <p>Kết quả: <span class="${ketQuaMoiNhat.taiXiu === 'Tài' ? 'tai' : 'xiu'}">${ketQuaMoiNhat.taiXiu}</span> &nbsp;|&nbsp; ${ketQuaMoiNhat.chanLe}</p>
-          ` : '<p>Chưa có kết quả</p>'}
-        </div>
-
-        <div class="card">
-          <h3>📊 Cầu 20 phiên gần nhất</h3>
-          <div class="cau">${cau || '(chưa có dữ liệu)'}</div>
-          <p style="font-size:12px; color:#8b949e">🔴 Tài &nbsp; 🔵 Xỉu</p>
-          <p>Đã lưu: <strong>${lichSu.length}</strong> phiên</p>
-        </div>
-
-        <div class="card">
-          <h3>📡 Endpoints</h3>
-          <ul>
-            <li><a href="/api/taixiu/history">/api/taixiu/history</a> — Lịch sử + thống kê cầu</li>
-            <li><a href="/api/taixiu/history?limit=100">/api/taixiu/history?limit=100</a> — 100 phiên gần nhất</li>
-            <li><a href="/api/taixiu/latest">/api/taixiu/latest</a> — Kết quả mới nhất</li>
-            <li><a href="/debug">/debug</a> — Raw WS messages (để biết format binary)</li>
-          </ul>
-        </div>
-      </body>
-    </html>
-  `);
+  const cau = lichSu.slice(0, 20).map(r => r.taiXiu === 'Tai' ? 'T' : 'X').join(' ');
+  res.send(`<!DOCTYPE html><html><head><title>Tai Xiu API</title><meta http-equiv="refresh" content="5"><meta charset="utf-8">
+  <style>body{font-family:Arial,sans-serif;margin:40px;background:#0d1117;color:#e6edf3}h1{color:#f0883e}.card{border:1px solid #30363d;padding:20px;margin:10px 0;border-radius:8px;background:#161b22}.ok{border-left:4px solid #3fb950}.err{border-left:4px solid #f85149}a{color:#58a6ff}.tai{color:#f85149;font-weight:bold}.xiu{color:#58a6ff;font-weight:bold}</style></head>
+  <body><h1>Tai Xiu API - Sun.win</h1>
+  <div class="card ${wsStatus?'ok':'err'}"><h3>WebSocket</h3><p>${wsStatus?'Connected':'Disconnected'} | Reconnect: ${reconnectAttempts}</p></div>
+  <div class="card ok"><h3>Ket qua moi nhat</h3>${ketQuaMoiNhat?`<p>Phien: <b>${ketQuaMoiNhat.phien||'?'}</b> | Xuc xac: <b>${ketQuaMoiNhat.x1}-${ketQuaMoiNhat.x2}-${ketQuaMoiNhat.x3}</b> | Tong: <b>${ketQuaMoiNhat.tong}</b></p><p>Ket qua: <span class="${ketQuaMoiNhat.taiXiu==='Tai'?'tai':'xiu'}">${ketQuaMoiNhat.taiXiu}</span> | ${ketQuaMoiNhat.chanLe}</p>`:'<p>Chua co</p>'}</div>
+  <div class="card"><h3>Cau 20 phien: ${cau||'(chua co)'}</h3><p>Da luu: <b>${lichSu.length}</b> phien</p></div>
+  <div class="card"><h3>Endpoints</h3><ul>
+  <li><a href="/api/taixiu/history">/api/taixiu/history</a></li>
+  <li><a href="/api/taixiu/latest">/api/taixiu/latest</a></li>
+  <li><a href="/debug">/debug</a></li>
+  <li><a href="/health">/health</a></li>
+  </ul></div></body></html>`);
 });
 
-// ===================== KHỞI ĐỘNG =====================
 app.listen(PORT, () => {
-  console.log(`🚀 Server chạy trên port ${PORT}`);
-  console.log(`🎲 API: http://localhost:${PORT}/api/taixiu/history`);
-  console.log(`🏥 Health: http://localhost:${PORT}/health`);
+  console.log(`Server chay tren port ${PORT}`);
   connect();
 });
 
 process.on('SIGINT', () => {
-  console.log('\n👋 Shutting down...');
   if (reconnectTimeout) clearTimeout(reconnectTimeout);
   if (ws) try { ws.close(); } catch {}
   process.exit(0);
