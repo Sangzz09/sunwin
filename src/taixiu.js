@@ -6,16 +6,22 @@ const PORT = process.env.PORT || 3000;
 const wsUrl = 'wss://websocket.azhkthg1.net/wsbinary?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJib3RydW10b29sdGFpeGkiLCJib3QiOjAsImlzTWVyY2hhbnQiOmZhbHNlLCJ2ZXJpZmllZEJhbmtBY2NvdW50IjpmYWxzZSwicGxheUV2ZW50TG9iYnkiOmZhbHNlLCJjdXN0b21lcklkIjozMzgwNTc4MzIsImFmZklkIjoiU3Vud2luIiwiYmFubmVkIjpmYWxzZSwiYnJhbmQiOiJzdW4ud2luIiwiZW1haWwiOiIiLCJ0aW1lc3RhbXAiOjE3NzM0MjY0NDUyMjMsImxvY2tHYW1lcyI6W10sImFtb3VudCI6MCwibG9ja0NoYXQiOmZhbHNlLCJwaG9uZVZlcmlmaWVkIjp0cnVlLCJpcEFkZHJlc3MiOiIxNC4xNzYuMTA4LjE0OSIsIm11dGUiOmZhbHNlLCJhdmF0YXIiOiJodHRwczovL2ltYWdlcy5zd2luc2hvcC5uZXQvaW1hZ2VzL2F2YXRhci9hdmF0YXJfMTAucG5nIiwicGxhdGZvcm1JZCI6NCwidXNlcklkIjoiY2QxZTM1YTItN2M1My00MjljLTkyZDAtNWY4OTEzNTRkZWEzIiwiZW1haWxWZXJpZmllZCI6bnVsbCwicmVnVGltZSI6MTc3MjQ0NjI4MTc3MywicGhvbmUiOiI4NDg4NjAyNzc2NyIsImRlcG9zaXQiOnRydWUsInVzZXJuYW1lIjoiU0NfbWluaHNhbmdwcm8ifQ.3I4bjuTWiwqEGo2X_3NmUD9lD1flYbChL3LmRKVQxgU';
 
 // ===================== STORAGE =====================
-const MAX_HISTORY = 200; // Lưu tối đa 200 phiên
+const MAX_HISTORY = 200;
 
-let lichSu = [];         // Mảng lịch sử kết quả
-let phienHienTai = null; // Phiên đang chờ kết quả
-let ketQuaMoiNhat = null; // Kết quả mới nhất
+let lichSu = [];
+let phienHienTai = null;
+let ketQuaMoiNhat = null;
 
 let ws = null;
 let reconnectTimeout = null;
 let reconnectAttempts = 0;
-let lastRawDebug = null; // Lưu raw data để debug
+
+// Debug: lưu 20 message raw gần nhất
+const debugMessages = [];
+function pushDebug(entry) {
+  debugMessages.unshift(entry);
+  if (debugMessages.length > 20) debugMessages.pop();
+}
 
 // ===================== PARSE HELPERS =====================
 
@@ -37,29 +43,48 @@ function getChanLe(tong) {
 }
 
 /**
- * Thử parse data nhận về từ WebSocket binary
- * Sun.win thường dùng JSON-over-binary hoặc protobuf
+ * Parse message từ WebSocket — thử nhiều format
  */
 function parseMessage(data) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  const hex = buf.toString('hex');
+  const utf8 = buf.toString('utf8');
+  const printable = utf8.replace(/[^\x20-\x7E]/g, '.');
+
+  // Log debug mọi message
+  pushDebug({
+    time: new Date().toISOString(),
+    byteLen: buf.length,
+    hex: hex.slice(0, 300),
+    utf8_printable: printable.slice(0, 300)
+  });
+  console.log(`📦 [MSG ${buf.length}B] hex: ${hex.slice(0,60)} | txt: ${printable.slice(0,80)}`);
+
+  // 1. Thử parse JSON thẳng
   try {
-    // Chuyển Buffer → string, thử JSON
-    const str = data.toString('utf8');
-    const json = JSON.parse(str);
-    return { type: 'json', data: json };
+    return { type: 'json', data: JSON.parse(utf8) };
   } catch {}
 
-  try {
-    // Một số server dùng JSON từ offset nhất định
-    const str = data.toString('utf8').replace(/[^\x20-\x7E\u00C0-\u024F\u4E00-\u9FFF]/g, '');
-    const startIdx = str.indexOf('{');
-    if (startIdx !== -1) {
-      const json = JSON.parse(str.slice(startIdx));
-      return { type: 'json_stripped', data: json };
+  // 2. Tìm JSON object trong chuỗi binary (bỏ byte header)
+  for (let i = 0; i < Math.min(buf.length, 20); i++) {
+    if (buf[i] === 0x7b) { // '{'
+      try {
+        return { type: 'json_offset', offset: i, data: JSON.parse(buf.slice(i).toString('utf8')) };
+      } catch {}
     }
-  } catch {}
+  }
 
-  // Trả về raw hex để debug nếu không parse được
-  return { type: 'binary', raw: data.toString('hex').slice(0, 200) };
+  // 3. Thử tìm JSON array
+  for (let i = 0; i < Math.min(buf.length, 20); i++) {
+    if (buf[i] === 0x5b) { // '['
+      try {
+        return { type: 'json_array', offset: i, data: JSON.parse(buf.slice(i).toString('utf8')) };
+      } catch {}
+    }
+  }
+
+  // 4. Không parse được — trả raw để debug
+  return { type: 'binary_unknown', hex: hex.slice(0, 400), utf8: printable.slice(0, 400) };
 }
 
 /**
@@ -151,11 +176,9 @@ function connect() {
   ws.on('message', (data) => {
     try {
       const parsed = parseMessage(data);
-      lastRawDebug = parsed.type === 'binary' ? parsed.raw : JSON.stringify(parsed.data).slice(0, 300);
 
-      if (parsed.type === 'binary') {
-        // Chưa parse được — log để debug
-        console.log('🔍 Binary raw (hex):', parsed.raw);
+      if (parsed.type === 'binary_unknown') {
+        console.log('🔍 Chưa decode được — xem /debug để biết format');
         return;
       }
 
@@ -252,6 +275,16 @@ function scheduleReconnect() {
 
 // ===================== API =====================
 
+// Debug — xem raw messages nhận được từ WS
+app.get('/debug', (req, res) => {
+  res.json({
+    wsStatus: ws ? (['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState]) : 'null',
+    reconnectAttempts,
+    tongTinNhanGanNhat: debugMessages.length,
+    tinNhan: debugMessages
+  });
+});
+
 // Kết quả mới nhất
 app.get('/api/taixiu/latest', (req, res) => {
   res.json({
@@ -302,7 +335,7 @@ app.get('/api/taixiu/history', (req, res) => {
   });
 });
 
-// Health check (Render dùng cái này để giữ server sống)
+// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: ws && ws.readyState === 1 ? 'healthy' : 'unhealthy',
@@ -310,7 +343,7 @@ app.get('/health', (req, res) => {
     reconnectAttempts,
     tongPhienDaLuu: lichSu.length,
     ketQuaMoiNhat: ketQuaMoiNhat ? `${ketQuaMoiNhat.taiXiu} (${ketQuaMoiNhat.tong})` : 'chưa có',
-    debug_lastRaw: lastRawDebug
+    debugUrl: '/debug — xem raw WS messages'
   });
 });
 
@@ -369,7 +402,7 @@ app.get('/', (req, res) => {
             <li><a href="/api/taixiu/history">/api/taixiu/history</a> — Lịch sử + thống kê cầu</li>
             <li><a href="/api/taixiu/history?limit=100">/api/taixiu/history?limit=100</a> — 100 phiên gần nhất</li>
             <li><a href="/api/taixiu/latest">/api/taixiu/latest</a> — Kết quả mới nhất</li>
-            <li><a href="/health">/health</a> — Health check + debug</li>
+            <li><a href="/debug">/debug</a> — Raw WS messages (để biết format binary)</li>
           </ul>
         </div>
       </body>
