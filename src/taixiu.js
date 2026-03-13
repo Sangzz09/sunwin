@@ -171,6 +171,43 @@ function connect() {
   ws.on('open', () => {
     console.log('✅ WebSocket connected!');
     reconnectAttempts = 0;
+
+    // Sun.win WS yêu cầu gửi subscribe message trước khi nhận data
+    // Thử nhiều format JSON phổ biến
+    const jsonMsgs = [
+      { type: 'subscribe', game: 'taixiu' },
+      { type: 'join', gameId: 'taixiu' },
+      { action: 'subscribe', channel: 'taixiu' },
+      { cmd: 'join', room: 'taixiu' },
+      { type: 'getHistory', gameType: 1 },
+      { t: 'join', game: 'taixiu' },
+      { t: 'subscribe' },
+      { type: 'ping' },
+    ];
+
+    jsonMsgs.forEach((msg, i) => {
+      setTimeout(() => {
+        if (ws && ws.readyState === 1) {
+          const str = JSON.stringify(msg);
+          console.log(`📤 Gửi JSON [${i}]:`, str);
+          try { ws.send(str); } catch {}
+        }
+      }, 300 + i * 400);
+    });
+
+    // Gửi thêm binary byte handshake (phổ biến trong gaming protocol)
+    setTimeout(() => {
+      [0x00, 0x01, 0x02, 0x03].forEach((byte, i) => {
+        setTimeout(() => {
+          if (ws && ws.readyState === 1) {
+            try {
+              ws.send(Buffer.from([byte]));
+              console.log(`📤 Gửi binary byte: 0x0${byte}`);
+            } catch {}
+          }
+        }, i * 200);
+      });
+    }, 4000);
   });
 
   ws.on('message', (data) => {
